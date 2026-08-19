@@ -1,5 +1,4 @@
 from datetime import date, timedelta
-import pandas as pd
 
 TODAY = date.today()
 
@@ -15,12 +14,14 @@ SAMPLES = [
         "condition": "Excellent",
         "usage_count": 18,
         "last_inspection": TODAY - timedelta(days=12),
-        "photo": "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=1200&q=80",
+        "photo": "",
         "next_available": TODAY,
         "next_booking": TODAY + timedelta(days=3),
         "next_booking_team": "Marketing",
         "status": "Available Today",
         "notes": "Latest released sample with updated packaging.",
+        "source": "Factory",
+        "received_date": TODAY - timedelta(days=190),
     },
     {
         "sample_id": "SMP-002",
@@ -33,12 +34,14 @@ SAMPLES = [
         "condition": "Good",
         "usage_count": 42,
         "last_inspection": TODAY - timedelta(days=31),
-        "photo": "https://images.unsplash.com/photo-1504280390367-361c6d9f38f4?auto=format&fit=crop&w=1200&q=80",
+        "photo": "",
         "next_available": TODAY + timedelta(days=2),
         "next_booking": TODAY + timedelta(days=6),
         "next_booking_team": "Sales",
         "status": "Checked Out",
         "notes": "Currently used for product photography.",
+        "source": "Factory",
+        "received_date": TODAY - timedelta(days=250),
     },
     {
         "sample_id": "SMP-003",
@@ -51,12 +54,14 @@ SAMPLES = [
         "condition": "Fair",
         "usage_count": 27,
         "last_inspection": TODAY - timedelta(days=47),
-        "photo": "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=1200&q=80",
+        "photo": "",
         "next_available": TODAY + timedelta(days=5),
         "next_booking": TODAY + timedelta(days=12),
         "next_booking_team": "Photography",
         "status": "In Use",
         "notes": "Inspect seam before next checkout.",
+        "source": "Factory",
+        "received_date": TODAY - timedelta(days=130),
     },
     {
         "sample_id": "SMP-004",
@@ -69,12 +74,14 @@ SAMPLES = [
         "condition": "Damaged",
         "usage_count": 11,
         "last_inspection": TODAY - timedelta(days=2),
-        "photo": "https://images.unsplash.com/photo-1475483768296-6163e08872a1?auto=format&fit=crop&w=1200&q=80",
+        "photo": "",
         "next_available": TODAY + timedelta(days=14),
         "next_booking": None,
         "next_booking_team": None,
         "status": "Damaged",
         "notes": "Valve damage reported after customer demonstration.",
+        "source": "Factory",
+        "received_date": TODAY - timedelta(days=90),
     },
     {
         "sample_id": "SMP-005",
@@ -87,12 +94,14 @@ SAMPLES = [
         "condition": "Good",
         "usage_count": 35,
         "last_inspection": TODAY - timedelta(days=20),
-        "photo": "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=1200&q=80",
+        "photo": "",
         "next_available": TODAY - timedelta(days=1),
         "next_booking": TODAY + timedelta(days=8),
         "next_booking_team": "Trade Show",
         "status": "Overdue",
         "notes": "Return was due yesterday.",
+        "source": "Factory",
+        "received_date": TODAY - timedelta(days=205),
     },
 ]
 
@@ -114,7 +123,7 @@ TIMELINE = [
     {"sample_id": "SMP-001", "date": TODAY - timedelta(days=77), "event": "Returned", "detail": "Returned to Warehouse B."},
     {"sample_id": "SMP-002", "date": TODAY - timedelta(days=250), "event": "Received from Factory", "detail": "Pre-production sample received."},
     {"sample_id": "SMP-002", "date": TODAY - timedelta(days=95), "event": "Sales Demo", "detail": "Used for dealer presentation."},
-    {"sample_id": "SMP-002", "date": TODAY - timedelta(days=2), "event": "Checked Out", "detail": "Checked out by Justin for photography."},
+    {"sample_id": "SMP-002", "date": TODAY - timedelta(days=2), "event": "Checked Out", "detail": "Checked out for photography."},
     {"sample_id": "SMP-003", "date": TODAY - timedelta(days=130), "event": "Received from Factory", "detail": "Launch sample received."},
     {"sample_id": "SMP-003", "date": TODAY - timedelta(days=1), "event": "Trade Show", "detail": "Moved to Auckland exhibition venue."},
     {"sample_id": "SMP-004", "date": TODAY - timedelta(days=90), "event": "Received from Factory", "detail": "Customer demonstration sample."},
@@ -132,12 +141,3 @@ ACTIVITY = [
     {"time": "Yesterday", "action": "Aero TXL Pro return became overdue", "type": "Overdue"},
     {"time": "2 days ago", "action": "Monstamat Twin moved to Auckland Trade Show", "type": "Movement"},
 ]
-
-def samples_df() -> pd.DataFrame:
-    return pd.DataFrame(SAMPLES)
-
-def bookings_df() -> pd.DataFrame:
-    return pd.DataFrame(BOOKINGS)
-
-def timeline_df() -> pd.DataFrame:
-    return pd.DataFrame(TIMELINE)

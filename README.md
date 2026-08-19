@@ -1,23 +1,22 @@
 # NexaFlow Sample Asset MVP
 
-A Streamlit proof of value for management demonstrating:
+Streamlit proof-of-value for NexaFlow Asset Tracking & Operational Visibility.
 
-- Executive operational dashboard
-- Sample search and availability
-- Sample operational detail
-- Booking calendar
-- Asset lifecycle timeline
-- QR action hub concept
-
-## Run locally
+## Run
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-streamlit run app.py
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
 ```
 
-## Demo message
+## Current demo
 
-NexaFlow is not another sample database. It provides asset tracking and operational visibility across the full lifecycle of physical product samples.
+- Executive Dashboard
+- Sample Search
+- Sample Detail
+- Sample Intake
+- Booking Calendar
+- Lifecycle Timeline
+- QR Action Hub
+
+Sample Intake creates a live session record and automatically starts the asset lifecycle timeline.
