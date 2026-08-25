@@ -9,14 +9,15 @@ python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-## Current demo
+## Working demo workflows
 
-- Executive Dashboard
-- Sample Search
-- Sample Detail
 - Sample Intake
-- Booking Calendar
-- Lifecycle Timeline
-- QR Action Hub
+- Check Out
+- Return Sample
+- Move Location
+- Report Damage
+- Automatic current-state updates
+- Automatic lifecycle timeline events
+- Executive activity feed
 
-Sample Intake creates a live session record and automatically starts the asset lifecycle timeline.
+All records currently persist only for the active Streamlit session. NeonDB and Supabase Storage are intentionally deferred until the operational workflow is validated.
