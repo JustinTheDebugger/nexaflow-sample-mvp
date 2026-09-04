@@ -484,20 +484,11 @@ def get_sample_products(sample_record_id):
             sp.id,
             sp.product_code,
             sp.relationship_type,
-            sp.created_at,
-
-            p.product_name,
-            p.range_name
+            sp.created_at
         FROM sample_products sp
-
-        LEFT JOIN products p
-            ON p.product_code = sp.product_code
-
         WHERE sp.sample_record_id = %s
-
         ORDER BY
             sp.relationship_type,
-            p.product_name,
             sp.product_code;
     """
 
@@ -581,31 +572,15 @@ def get_active_products(
     if category_code:
         query = """
             SELECT
-                p.product_code,
-                p.product_name,
-                p.range_name,
-
-                COALESCE(
-                    p.category_code,
-                    pm.category_code
-                ) AS category_code,
-
-                p.status
-
-            FROM products p
-
-            LEFT JOIN product_master pm
-                ON pm.product_code = p.product_code
-
-            WHERE p.status = 'ACTIVE'
-
-              AND COALESCE(
-                    p.category_code,
-                    pm.category_code
-                  ) = %s
-
-            ORDER BY
-                p.product_name;
+                product_code,
+                product_name,
+                range_name,
+                category_code,
+                status
+            FROM products
+            WHERE status = 'ACTIVE'
+              AND category_code = %s
+            ORDER BY product_name;
         """
 
         params = (
@@ -615,26 +590,14 @@ def get_active_products(
     else:
         query = """
             SELECT
-                p.product_code,
-                p.product_name,
-                p.range_name,
-
-                COALESCE(
-                    p.category_code,
-                    pm.category_code
-                ) AS category_code,
-
-                p.status
-
-            FROM products p
-
-            LEFT JOIN product_master pm
-                ON pm.product_code = p.product_code
-
-            WHERE p.status = 'ACTIVE'
-
-            ORDER BY
-                p.product_name;
+                product_code,
+                product_name,
+                range_name,
+                category_code,
+                status
+            FROM products
+            WHERE status = 'ACTIVE'
+            ORDER BY product_name;
         """
 
         params = ()
