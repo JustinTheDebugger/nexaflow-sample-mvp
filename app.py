@@ -21,6 +21,10 @@ from repositories.sample_repository import (
     get_sample_types,
 )
 
+from pages_ui.sample_booking import (
+    render_sample_booking,
+)
+
 from utils.qr import build_sample_qr
 from utils.tag import build_warehouse_tag
 
@@ -152,6 +156,7 @@ with st.sidebar:
             "Sample Search",
             "Sample Detail",
             "Sample Intake",
+            "Sample Booking",
             "QR Action Hub",
         ],
         label_visibility="collapsed",
@@ -660,6 +665,9 @@ elif page == "Sample Intake":
                     }
 
                     st.rerun()
+
+elif page == "Sample Booking":
+    render_sample_booking(hero)
 
 elif page == "QR Action Hub":
     hero(

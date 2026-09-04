@@ -661,3 +661,262 @@ def get_sample_products(sample_record_id):
                 (sample_record_id,),
             )
             return cur.fetchall()
+        
+
+def get_bookable_samples():
+    query = """
+        SELECT
+            sm.id,
+            sm.sample_id,
+            sm.sample_name,
+            sm.category_code,
+            cm.category_name,
+
+            st.code AS sample_type_code,
+            st.name AS sample_type_name,
+            st.is_bookable,
+            st.requires_approval,
+
+            cl.code AS current_location_code,
+            cl.name AS current_location_name,
+
+            sm.asset_state,
+            sm.condition,
+            sm.current_holder
+
+        FROM sample_master sm
+
+        JOIN sample_types st
+            ON st.id = sm.sample_type_id
+
+        LEFT JOIN sample_locations cl
+            ON cl.id = sm.current_location_id
+
+        LEFT JOIN category_master cm
+            ON cm.category_code = sm.category_code
+
+        WHERE st.is_bookable = TRUE
+        AND sm.asset_state = 'Active'
+
+        ORDER BY
+            sm.sample_name,
+            sm.sample_id;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query)
+            return cur.fetchall()
+            
+
+def is_sample_available(
+    *,
+    sample_record_id,
+    start_date,
+    end_date,
+):
+    query = """
+        SELECT EXISTS (
+            SELECT 1
+            FROM sample_bookings sb
+            WHERE sb.sample_record_id = %s
+
+              AND sb.booking_status IN (
+                  'Reserved',
+                  'Pending Approval',
+                  'Approved'
+              )
+
+              AND sb.start_date <= %s
+              AND sb.end_date >= %s
+        ) AS has_conflict;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                (
+                    sample_record_id,
+                    end_date,
+                    start_date,
+                ),
+            )
+
+            row = cur.fetchone()
+
+    return not row["has_conflict"]
+
+
+def get_available_samples(
+    *,
+    start_date,
+    end_date,
+):
+    samples = get_bookable_samples()
+
+    available = []
+
+    for sample in samples:
+        if is_sample_available(
+            sample_record_id=sample["id"],
+            start_date=start_date,
+            end_date=end_date,
+        ):
+            available.append(sample)
+
+    return available
+
+def create_sample_booking(
+    *,
+    sample_record_id,
+    booked_by,
+    team,
+    purpose,
+    start_date,
+    end_date,
+    notes,
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                SELECT
+                    sm.sample_id,
+                    sm.sample_name,
+                    st.requires_approval
+
+                FROM sample_master sm
+
+                JOIN sample_types st
+                    ON st.id = sm.sample_type_id
+
+                WHERE sm.id = %s
+                FOR UPDATE;
+                """,
+                (sample_record_id,),
+            )
+
+            sample = cur.fetchone()
+
+            if sample is None:
+                raise ValueError(
+                    "Sample could not be found."
+                )
+
+            cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM sample_bookings
+                    WHERE sample_record_id = %s
+
+                      AND booking_status IN (
+                          'Reserved',
+                          'Pending Approval',
+                          'Approved'
+                      )
+
+                      AND start_date <= %s
+                      AND end_date >= %s
+                ) AS has_conflict;
+                """,
+                (
+                    sample_record_id,
+                    end_date,
+                    start_date,
+                ),
+            )
+
+            conflict = cur.fetchone()
+
+            if conflict["has_conflict"]:
+                raise ValueError(
+                    "This sample is no longer available "
+                    "for the selected dates."
+                )
+
+            requires_approval = sample[
+                "requires_approval"
+            ]
+
+            booking_status = (
+                "Pending Approval"
+                if requires_approval
+                else "Reserved"
+            )
+
+            cur.execute(
+                """
+                INSERT INTO sample_bookings (
+                    sample_record_id,
+                    booked_by,
+                    team,
+                    purpose,
+                    start_date,
+                    end_date,
+                    booking_status,
+                    approval_required,
+                    notes
+                )
+                VALUES (
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s
+                )
+                RETURNING
+                    id,
+                    booking_status;
+                """,
+                (
+                    sample_record_id,
+                    booked_by,
+                    team,
+                    purpose,
+                    start_date,
+                    end_date,
+                    booking_status,
+                    requires_approval,
+                    notes,
+                ),
+            )
+
+            booking = cur.fetchone()
+
+            cur.execute(
+                """
+                INSERT INTO sample_events (
+                    sample_record_id,
+                    event_type,
+                    title,
+                    details
+                )
+                VALUES (
+                    %s,
+                    %s,
+                    %s,
+                    %s
+                );
+                """,
+                (
+                    sample_record_id,
+                    "BOOKING_CREATED",
+                    "Booking Created",
+                    (
+                        f"Booked by {booked_by} "
+                        f"({team}) for {purpose}. "
+                        f"{start_date:%d %b %Y} "
+                        f"to {end_date:%d %b %Y}. "
+                        f"Status: {booking_status}."
+                    ),
+                ),
+            )
+
+            return booking
