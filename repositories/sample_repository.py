@@ -476,3 +476,170 @@ def update_sample_details(
                 )
 
             return updated_sample
+
+
+def get_sample_products(sample_record_id):
+    query = """
+        SELECT
+            sp.id,
+            sp.product_code,
+            sp.relationship_type,
+            sp.created_at
+        FROM sample_products sp
+        WHERE sp.sample_record_id = %s
+        ORDER BY
+            sp.relationship_type,
+            sp.product_code;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                (sample_record_id,),
+            )
+            return cur.fetchall()
+
+
+def link_sample_product(
+    *,
+    sample_record_id,
+    product_code,
+    relationship_type="Primary",
+):
+    query = """
+        INSERT INTO sample_products (
+            sample_record_id,
+            product_code,
+            relationship_type
+        )
+        VALUES (
+            %s,
+            %s,
+            %s
+        )
+        ON CONFLICT (
+            sample_record_id,
+            product_code
+        )
+        DO UPDATE SET
+            relationship_type = EXCLUDED.relationship_type
+        RETURNING
+            id,
+            product_code,
+            relationship_type;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                (
+                    sample_record_id,
+                    product_code,
+                    relationship_type,
+                ),
+            )
+
+            return cur.fetchone()
+
+
+def unlink_sample_product(
+    *,
+    sample_record_id,
+    product_code,
+):
+    query = """
+        DELETE FROM sample_products
+        WHERE sample_record_id = %s
+          AND product_code = %s;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                (
+                    sample_record_id,
+                    product_code,
+                ),
+            )
+
+
+def get_active_products(
+    category_code=None,
+):
+    if category_code:
+        query = """
+            SELECT
+                product_code,
+                product_name,
+                range_name,
+                category_code,
+                status
+            FROM products
+            WHERE status = 'ACTIVE'
+              AND category_code = %s
+            ORDER BY product_name;
+        """
+
+        params = (
+            category_code,
+        )
+
+    else:
+        query = """
+            SELECT
+                product_code,
+                product_name,
+                range_name,
+                category_code,
+                status
+            FROM products
+            WHERE status = 'ACTIVE'
+            ORDER BY product_name;
+        """
+
+        params = ()
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                params,
+            )
+
+            return cur.fetchall()
+
+
+def get_sample_products(sample_record_id):
+    query = """
+        SELECT
+            sp.id,
+            sp.product_code,
+            sp.relationship_type,
+            sp.created_at,
+
+            p.product_name,
+            p.range_name
+
+        FROM sample_products sp
+
+        LEFT JOIN products p
+            ON p.product_code = sp.product_code
+
+        WHERE sp.sample_record_id = %s
+
+        ORDER BY
+            sp.relationship_type,
+            p.product_name,
+            sp.product_code;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                (sample_record_id,),
+            )
+            return cur.fetchall()
