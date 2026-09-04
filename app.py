@@ -10,6 +10,10 @@ from pages_ui.sample_search import (
     render_sample_search,
 )
 
+from pages_ui.sample_detail import (
+    render_sample_detail,
+)
+
 from repositories.sample_repository import (
     create_samples,
     get_categories,
@@ -31,6 +35,11 @@ if "timeline" not in st.session_state:
     st.session_state.timeline = [dict(x) for x in TIMELINE]
 if "activity" not in st.session_state:
     st.session_state.activity = [dict(x) for x in ACTIVITY]
+
+if "next_page" in st.session_state:
+    st.session_state["page"] = st.session_state.pop(
+        "next_page"
+    )
 
 today = date.today()
 
@@ -135,6 +144,7 @@ with st.sidebar:
     st.markdown("## ◈ NexaFlow")
     st.caption("Asset Tracking & Operational Visibility")
     st.markdown("---")
+
     page = st.radio(
         "Navigate",
         [
@@ -145,7 +155,9 @@ with st.sidebar:
             "QR Action Hub",
         ],
         label_visibility="collapsed",
+        key="page",
     )
+
     st.markdown("---")
     st.caption("Executive Demo · Streamlit MVP")
 
@@ -222,91 +234,7 @@ elif page == "Sample Search":
     
 
 elif page == "Sample Detail":
-    hero(
-        "Sample Operational Dashboard",
-        "One screen answering the essential operational questions for each physical asset.",
-    )
-
-    sample_id = sample_selector("detail_selector")
-    sample = get_sample(sample_id)
-
-    left, right = st.columns([1.15, 2])
-    with left:
-        st.markdown("### ◈ Physical Asset")
-        st.markdown(f"## {sample['product_name']}")
-        st.caption(f"{sample['sample_id']} · {sample['product_code']}")
-        st.markdown(f"<span class='status'>{sample['status']}</span>", unsafe_allow_html=True)
-        st.write(sample["notes"])
-
-    with right:
-        r1 = st.columns(3)
-        with r1[0]:
-            info_card("Current holder", f"{sample['holder']} · {sample['holder_team']}")
-        with r1[1]:
-            info_card("Current location", sample["location"])
-        with r1[2]:
-            info_card("Availability", availability_text(sample))
-
-        st.write("")
-        r2 = st.columns(3)
-        with r2[0]:
-            next_booking = (
-                f"{sample['next_booking'].strftime('%d %b')} · {sample['next_booking_team']}"
-                if sample["next_booking"] else "No upcoming booking"
-            )
-            info_card("Next booking", next_booking)
-        with r2[1]:
-            info_card("Condition", sample["condition"])
-        with r2[2]:
-            info_card(
-                "Usage / inspection",
-                f"{sample['usage_count']} uses · {sample['last_inspection'].strftime('%d %b')}",
-            )
-
-    tabs = st.tabs(["Booking Calendar", "Timeline", "Asset Record"])
-
-    with tabs[0]:
-        sample_bookings = bookings[bookings["sample_id"] == sample["sample_id"]].copy()
-        calendar_days = []
-        for offset in range(14):
-            day = today + timedelta(days=offset)
-            matches = sample_bookings[
-                (sample_bookings["start"] <= day) & (sample_bookings["end"] >= day)
-            ]
-            if matches.empty:
-                calendar_days.append({"Date": day.strftime("%a %d %b"), "State": "Available", "Holder": "Warehouse"})
-            else:
-                b = matches.iloc[0]
-                calendar_days.append({"Date": day.strftime("%a %d %b"), "State": "Booked", "Holder": b["team"]})
-        st.dataframe(pd.DataFrame(calendar_days), use_container_width=True, hide_index=True)
-
-    with tabs[1]:
-        timeline_now = pd.DataFrame(st.session_state.timeline)
-        sample_timeline = timeline_now[timeline_now["sample_id"] == sample["sample_id"]].sort_values("date", ascending=False)
-        for _, event in sample_timeline.iterrows():
-            st.markdown(
-                f'<div class="timeline-item"><div class="timeline-date">{event["date"].strftime("%d %b %Y")}</div>'
-                f'<div class="timeline-title">{event["event"]}</div>'
-                f'<div class="small-muted">{event["detail"]}</div></div>',
-                unsafe_allow_html=True,
-            )
-
-    with tabs[2]:
-        record = pd.DataFrame(
-            {
-                "Field": ["Sample ID", "Product code", "Category", "Source", "Received", "Condition", "Location"],
-                "Value": [
-                    sample["sample_id"],
-                    sample["product_code"],
-                    sample["category"],
-                    sample.get("source", "—"),
-                    sample["received_date"].strftime("%d %b %Y"),
-                    sample["condition"],
-                    sample["location"],
-                ],
-            }
-        )
-        st.dataframe(record, use_container_width=True, hide_index=True)
+    render_sample_detail(hero)
 
 elif page == "Sample Intake":
     hero(
@@ -470,13 +398,13 @@ elif page == "Sample Intake":
                         ]
 
                         suffix_text = (
-                            f"- {received_date.year} "
+                            f"{received_date.year} "
                             f"{preview_type['name']}"
                         )
 
                     else:
                         suffix_text = (
-                            f"- {received_date.year} Sample"
+                            f"{received_date.year} Sample"
                         )
 
                     st.markdown(
@@ -669,7 +597,7 @@ elif page == "Sample Intake":
 
                 generated_sample_name = (
                     f"{sample_name_input.strip()} "
-                    f"- {received_date.year} "
+                    f"{received_date.year} "
                     f"{selected_type['name']}"
                 )
 

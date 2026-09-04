@@ -417,11 +417,27 @@ def render_sample_search(hero):
                 )
 
             # -------------------------------------------------
-            # Individual print actions
+            # Actions Section
             # -------------------------------------------------
 
             with col5:
                 st.caption("Actions")
+
+                if st.button(
+                    "View Sample",
+                    use_container_width=True,
+                    type="primary",
+                    key=f"view_{sample['id']}",
+                ):
+                    st.session_state[
+                        "selected_sample_record_id"
+                    ] = str(sample["id"])
+
+                    st.session_state[
+                        "next_page"
+                    ] = "Sample Detail"
+
+                    st.rerun()
 
                 st.download_button(
                     "QR Code",
@@ -432,6 +448,7 @@ def render_sample_search(hero):
                     ),
                     mime="image/png",
                     use_container_width=True,
+                    type="primary",
                     key=(
                         f"qr_{sample['id']}"
                     ),
@@ -446,6 +463,7 @@ def render_sample_search(hero):
                     ),
                     mime="application/pdf",
                     use_container_width=True,
+                    type="secondary",
                     key=(
                         f"tag_{sample['id']}"
                     ),

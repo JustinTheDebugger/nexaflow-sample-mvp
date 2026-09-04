@@ -1,3 +1,5 @@
+import re
+
 from io import BytesIO
 
 from reportlab.lib.units import cm
@@ -9,24 +11,39 @@ TAG_WIDTH = 6 * cm
 TAG_HEIGHT = 4 * cm
 
 
-def split_sample_name(sample_name: str) -> tuple[str, str]:
+def split_sample_name(
+    sample_name: str,
+) -> tuple[str, str]:
     """
     Example:
 
-    Test Eco Cupboard - 2026 Test Sample - 03
+    Test Eco Fold Single 2026 Test Sample - 01
 
     becomes:
 
-    Test Eco Cupboard
-    2026 Test Sample - 03
+    Test Eco Fold Single
+    2026 Test Sample - 01
     """
 
-    if " - " in sample_name:
-        parts = sample_name.split(" - ", 1)
+    match = re.search(
+        r"\b(20\d{2})\b",
+        sample_name,
+    )
+
+    if match:
+        split_position = match.start()
+
+        first_line = sample_name[
+            :split_position
+        ].strip()
+
+        second_line = sample_name[
+            split_position:
+        ].strip()
 
         return (
-            parts[0].strip(),
-            parts[1].strip(),
+            first_line,
+            second_line,
         )
 
     return sample_name, ""
