@@ -1,4 +1,3 @@
-import pandas as pd
 import streamlit as st
 
 from repositories.sample_repository import (
@@ -109,7 +108,7 @@ def render_sample_detail(hero):
     with action_col1:
         if st.button(
             "← Back",
-            use_container_width=True,
+            width="stretch",
         ):
             st.session_state["next_page"] = (
                 "Sample Search"
@@ -136,7 +135,7 @@ def render_sample_detail(hero):
                 f"_tag.pdf"
             ),
             mime="application/pdf",
-            use_container_width=True,
+            width="stretch",
         )
 
     with action_col3:
@@ -311,7 +310,7 @@ def render_sample_detail(hero):
                     st.form_submit_button(
                         "Save Changes",
                         type="primary",
-                        use_container_width=True,
+                        width="stretch",
                     )
                 )
 
@@ -553,89 +552,95 @@ def render_sample_detail(hero):
                 st.markdown("---")
 
     # ---------------------------------------------------------
-    # Details
+    # Details Tab
     # ---------------------------------------------------------
 
     with tabs[1]:
-        details = pd.DataFrame(
-            {
-                "Field": [
-                    "Sample ID",
-                    "Sample Name",
-                    "Sample Type",
-                    "Category",
-                    "Origin Location",
-                    "Current Location",
-                    "Source",
-                    "Received Date",
-                    "Asset State",
-                    "Condition",
-                    "Current Holder",
-                    "Current Holder Team",
-                    "Usage Count",
-                    "Last Inspection",
-                    "Notes",
-                ],
-                "Value": [
-                    sample["sample_id"],
-                    sample["sample_name"],
-                    sample["sample_type_name"],
-                    (
-                        sample["category_name"]
-                        or "—"
-                    ),
-                    (
-                        sample[
-                            "origin_location_name"
-                        ]
-                        or "—"
-                    ),
-                    location_name,
-                    sample["source"] or "—",
-                    (
-                        sample["received_date"]
-                        .strftime("%d %b %Y")
-                        if sample[
-                            "received_date"
-                        ]
-                        else "—"
-                    ),
-                    sample["asset_state"],
-                    sample["condition"],
-                    (
-                        sample[
-                            "current_holder"
-                        ]
-                        or "—"
-                    ),
-                    (
-                        sample[
-                            "current_holder_team"
-                        ]
-                        or "—"
-                    ),
-                    sample["usage_count"],
-                    (
-                        sample[
-                            "last_inspection_date"
-                        ].strftime(
-                            "%d %b %Y"
-                        )
-                        if sample[
-                            "last_inspection_date"
-                        ]
-                        else "—"
-                    ),
-                    sample["notes"] or "—",
-                ],
-            }
-        )
+        detail_rows = [
+            (
+                "Sample ID",
+                sample["sample_id"],
+            ),
+            (
+                "Sample Name",
+                sample["sample_name"],
+            ),
+            (
+                "Sample Type",
+                sample["sample_type_name"],
+            ),
+            (
+                "Category",
+                sample["category_name"] or "—",
+            ),
+            (
+                "Origin Location",
+                sample["origin_location_name"] or "—",
+            ),
+            (
+                "Current Location",
+                location_name,
+            ),
+            (
+                "Source",
+                sample["source"] or "—",
+            ),
+            (
+                "Received Date",
+                (
+                    sample["received_date"].strftime(
+                        "%d %b %Y"
+                    )
+                    if sample["received_date"]
+                    else "—"
+                ),
+            ),
+            (
+                "Asset State",
+                sample["asset_state"],
+            ),
+            (
+                "Condition",
+                sample["condition"],
+            ),
+            (
+                "Current Holder",
+                sample["current_holder"] or "—",
+            ),
+            (
+                "Current Holder Team",
+                sample["current_holder_team"] or "—",
+            ),
+            (
+                "Usage Count",
+                str(sample["usage_count"] or 0),
+            ),
+            (
+                "Last Inspection",
+                (
+                    sample["last_inspection_date"].strftime(
+                        "%d %b %Y"
+                    )
+                    if sample["last_inspection_date"]
+                    else "—"
+                ),
+            ),
+            (
+                "Notes",
+                sample["notes"] or "—",
+            ),
+        ]
 
-        st.dataframe(
-            details,
-            use_container_width=True,
-            hide_index=True,
-        )
+        for label, value in detail_rows:
+            detail_col1, detail_col2 = st.columns(
+                [1, 3]
+            )
+
+            with detail_col1:
+                st.caption(label)
+
+            with detail_col2:
+                st.write(str(value))
 
     # ---------------------------------------------------------
     # Related products
@@ -644,6 +649,7 @@ def render_sample_detail(hero):
     with tabs[2]:
         st.markdown("### Related Products")
 
+        # Load existing linked products
         try:
             related_products = get_sample_products(
                 sample_record_id
@@ -655,16 +661,20 @@ def render_sample_detail(hero):
             )
             related_products = []
 
+        # Show existing linked products
         if related_products:
             for product in related_products:
                 with st.container(border=True):
                     product_col, type_col, action_col = (
-                        st.columns([2.5, 1.3, 1])
+                        st.columns([2.8, 1.2, 1])
                     )
 
                     with product_col:
                         st.markdown(
-                            f"**{product['product_code']}**"
+                            f"**{product['product_name'] or product['product_code']}**"
+                        )
+                        st.caption(
+                            product["product_code"]
                         )
 
                     with type_col:
@@ -676,31 +686,31 @@ def render_sample_detail(hero):
                     with action_col:
                         if st.button(
                             "Unlink",
-                            key=(
-                                f"unlink_product_"
-                                f"{product['id']}"
-                            ),
-                            use_container_width=True,
+                            key=f"unlink_{product['id']}",
+                            width="stretch",
                         ):
                             try:
                                 unlink_sample_product(
-                                    sample_record_id=(
-                                        sample_record_id
-                                    ),
-                                    product_code=(
-                                        product[
-                                            "product_code"
-                                        ]
-                                    ),
+                                    sample_record_id=sample_record_id,
+                                    product_code=product["product_code"],
                                 )
 
                             except Exception as exc:
                                 st.error(
-                                    f"Could not unlink "
-                                    f"product: {exc}"
+                                    f"Could not unlink product: {exc}"
                                 )
 
                             else:
+                                st.session_state[
+                                    "product_link_flash"
+                                ] = {
+                                    "type": "success",
+                                    "message": (
+                                        f"{product['product_name'] or product['product_code']} "
+                                        f"unlinked successfully."
+                                    ),
+                                }
+
                                 st.rerun()
 
         else:
@@ -708,99 +718,148 @@ def render_sample_detail(hero):
                 "No products are linked to this sample yet."
             )
 
-        
-        try:
-            related_products = get_sample_products(
-                sample_record_id
-            )
+        # Product flash message
+        product_flash = st.session_state.pop(
+            "product_link_flash",
+            None,
+        )
 
-            if (
-                product_scope
-                == "Same Category"
-                and sample["category_code"]
-            ):
-                active_products = (
-                    get_active_products(
-                        category_code=(
-                            sample["category_code"]
-                        )
-                    )
+        if product_flash:
+            if product_flash["type"] == "success":
+                st.success(
+                    product_flash["message"]
                 )
-
             else:
-                active_products = (
-                    get_active_products()
+                st.error(
+                    product_flash["message"]
                 )
-
-        except Exception as exc:
-            st.error(
-                f"Could not load product "
-                f"relationships: {exc}"
-            )
-
-            related_products = []
-            active_products = []
-
 
         st.markdown("#### Link Product")
 
-        with st.form(
-            "link_product_form",
-            clear_on_submit=True,
-        ):
-            product_code = st.text_input(
-                "Product Code *",
-                placeholder="e.g. 0247304-001",
-            )
+        # IMPORTANT:
+        # product_scope must be created BEFORE it is used
+        product_scope = st.radio(
+            "Product selection",
+            [
+                "Same Category",
+                "All Active Products",
+            ],
+            horizontal=True,
+            key="related_product_scope",
+        )
 
-            relationship_type = st.selectbox(
-                "Relationship",
-                [
-                    "Primary",
-                    "Compatible",
-                    "Accessory",
-                    "Reference",
-                ],
-            )
+        # Now load products
+        try:
+            if (
+                product_scope == "Same Category"
+                and sample["category_code"]
+            ):
+                active_products = get_active_products(
+                    category_code=sample["category_code"]
+                )
+            else:
+                active_products = get_active_products()
 
-            link_product_submit = (
-                st.form_submit_button(
+        except Exception as exc:
+            st.error(
+                f"Could not load products: {exc}"
+            )
+            active_products = []
+
+        linked_product_codes = {
+            product["product_code"]
+            for product in related_products
+        }
+
+        available_products = [
+            product
+            for product in active_products
+            if product["product_code"]
+            not in linked_product_codes
+        ]
+
+        if not available_products:
+            if product_scope == "Same Category":
+                st.info(
+                    "No additional active products were found "
+                    "in this sample's category. Try All Active Products."
+                )
+            else:
+                st.info(
+                    "No additional active products are available."
+                )
+
+        else:
+            product_options = {
+                f"{item['product_name']} · {item['product_code']}": item
+                for item in available_products
+            }
+
+            with st.form(
+                "link_product_form",
+                clear_on_submit=True,
+            ):
+                product_label = st.selectbox(
+                    "Product *",
+                    options=[
+                        "Select a Product",
+                        *product_options.keys(),
+                    ],
+                )
+
+                relationship_type = st.selectbox(
+                    "Relationship",
+                    [
+                        "Primary",
+                        "Compatible",
+                        "Accessory",
+                        "Reference",
+                    ],
+                )
+
+                link_product_submit = st.form_submit_button(
                     "Link Product",
                     type="primary",
-                    use_container_width=True,
-                )
-            )
-
-        if link_product_submit:
-            if not product_code.strip():
-                st.error(
-                    "Product Code is required."
+                    width="stretch",
                 )
 
-            else:
-                try:
-                    link_sample_product(
-                        sample_record_id=(
-                            sample_record_id
-                        ),
-                        product_code=(
-                            product_code.strip()
-                        ),
-                        relationship_type=(
-                            relationship_type
-                        ),
-                    )
-
-                except Exception as exc:
+            if link_product_submit:
+                if product_label == "Select a Product":
                     st.error(
-                        f"Could not link product: {exc}"
+                        "Please select a Product."
                     )
 
                 else:
-                    st.success(
-                        "Product linked successfully."
-                    )
-                    st.rerun()
+                    selected_product = product_options[
+                        product_label
+                    ]
+
+                    try:
+                        link_sample_product(
+                            sample_record_id=sample_record_id,
+                            product_code=selected_product[
+                                "product_code"
+                            ],
+                            relationship_type=relationship_type,
+                        )
+
+                    except Exception as exc:
+                        st.error(
+                            f"Could not link product: {exc}"
+                        )
+
+                    else:
+                        st.session_state[
+                            "product_link_flash"
+                        ] = {
+                            "type": "success",
+                            "message": (
+                                f"{selected_product['product_name']} "
+                                f"linked successfully."
+                            ),
+                        }
+
+                        st.rerun()
 
     # ---------------------------------------------------------
     # Media

@@ -572,15 +572,24 @@ def get_active_products(
     if category_code:
         query = """
             SELECT
-                product_code,
-                product_name,
-                range_name,
-                category_code,
-                status
-            FROM products
-            WHERE status = 'ACTIVE'
-              AND category_code = %s
-            ORDER BY product_name;
+                p.product_code,
+                p.product_name,
+                p.range_name,
+
+                pm.category_code,
+
+                p.status
+
+            FROM products p
+
+            LEFT JOIN product_master pm
+                ON pm.product_code = p.product_code
+
+            WHERE p.status = 'ACTIVE'
+              AND pm.category_code = %s
+
+            ORDER BY
+                p.product_name;
         """
 
         params = (
@@ -590,14 +599,23 @@ def get_active_products(
     else:
         query = """
             SELECT
-                product_code,
-                product_name,
-                range_name,
-                category_code,
-                status
-            FROM products
-            WHERE status = 'ACTIVE'
-            ORDER BY product_name;
+                p.product_code,
+                p.product_name,
+                p.range_name,
+
+                pm.category_code,
+
+                p.status
+
+            FROM products p
+
+            LEFT JOIN product_master pm
+                ON pm.product_code = p.product_code
+
+            WHERE p.status = 'ACTIVE'
+
+            ORDER BY
+                p.product_name;
         """
 
         params = ()
