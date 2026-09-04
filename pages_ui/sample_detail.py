@@ -2,10 +2,14 @@ import pandas as pd
 import streamlit as st
 
 from repositories.sample_repository import (
+    get_active_products,
     get_categories,
     get_sample_by_record_id,
     get_sample_events,
+    get_sample_products,
     get_sample_types,
+    link_sample_product,
+    unlink_sample_product,
     update_sample_details,
 )
 
@@ -638,9 +642,165 @@ def render_sample_detail(hero):
     # ---------------------------------------------------------
 
     with tabs[2]:
-        st.info(
-            "Product relationships will be connected next."
-        )
+        st.markdown("### Related Products")
+
+        try:
+            related_products = get_sample_products(
+                sample_record_id
+            )
+
+        except Exception as exc:
+            st.error(
+                f"Could not load related products: {exc}"
+            )
+            related_products = []
+
+        if related_products:
+            for product in related_products:
+                with st.container(border=True):
+                    product_col, type_col, action_col = (
+                        st.columns([2.5, 1.3, 1])
+                    )
+
+                    with product_col:
+                        st.markdown(
+                            f"**{product['product_code']}**"
+                        )
+
+                    with type_col:
+                        st.caption("Relationship")
+                        st.write(
+                            product["relationship_type"]
+                        )
+
+                    with action_col:
+                        if st.button(
+                            "Unlink",
+                            key=(
+                                f"unlink_product_"
+                                f"{product['id']}"
+                            ),
+                            use_container_width=True,
+                        ):
+                            try:
+                                unlink_sample_product(
+                                    sample_record_id=(
+                                        sample_record_id
+                                    ),
+                                    product_code=(
+                                        product[
+                                            "product_code"
+                                        ]
+                                    ),
+                                )
+
+                            except Exception as exc:
+                                st.error(
+                                    f"Could not unlink "
+                                    f"product: {exc}"
+                                )
+
+                            else:
+                                st.rerun()
+
+        else:
+            st.info(
+                "No products are linked to this sample yet."
+            )
+
+        
+        try:
+            related_products = get_sample_products(
+                sample_record_id
+            )
+
+            if (
+                product_scope
+                == "Same Category"
+                and sample["category_code"]
+            ):
+                active_products = (
+                    get_active_products(
+                        category_code=(
+                            sample["category_code"]
+                        )
+                    )
+                )
+
+            else:
+                active_products = (
+                    get_active_products()
+                )
+
+        except Exception as exc:
+            st.error(
+                f"Could not load product "
+                f"relationships: {exc}"
+            )
+
+            related_products = []
+            active_products = []
+
+
+        st.markdown("#### Link Product")
+
+        with st.form(
+            "link_product_form",
+            clear_on_submit=True,
+        ):
+            product_code = st.text_input(
+                "Product Code *",
+                placeholder="e.g. 0247304-001",
+            )
+
+            relationship_type = st.selectbox(
+                "Relationship",
+                [
+                    "Primary",
+                    "Compatible",
+                    "Accessory",
+                    "Reference",
+                ],
+            )
+
+            link_product_submit = (
+                st.form_submit_button(
+                    "Link Product",
+                    type="primary",
+                    use_container_width=True,
+                )
+            )
+
+        if link_product_submit:
+            if not product_code.strip():
+                st.error(
+                    "Product Code is required."
+                )
+
+            else:
+                try:
+                    link_sample_product(
+                        sample_record_id=(
+                            sample_record_id
+                        ),
+                        product_code=(
+                            product_code.strip()
+                        ),
+                        relationship_type=(
+                            relationship_type
+                        ),
+                    )
+
+                except Exception as exc:
+                    st.error(
+                        f"Could not link product: {exc}"
+                    )
+
+                else:
+                    st.success(
+                        "Product linked successfully."
+                    )
+                    st.rerun()
 
     # ---------------------------------------------------------
     # Media
