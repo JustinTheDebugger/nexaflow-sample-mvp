@@ -19,6 +19,11 @@ from utils.tag import build_warehouse_tag
 
 def render_sample_detail(hero):
 
+    product_flash = st.session_state.pop(
+        "product_link_flash",
+        None,
+    )
+
     if st.session_state.pop(
         "close_sample_edit",
         False,
@@ -66,6 +71,7 @@ def render_sample_detail(hero):
             f"Could not load sample: {exc}"
         )
         return
+
 
     if not sample:
         st.error(
@@ -491,7 +497,7 @@ def render_sample_detail(hero):
     )
 
     # ---------------------------------------------------------
-    # Timeline
+    # Timeline Tab
     # ---------------------------------------------------------
 
     with tabs[0]:
@@ -553,7 +559,7 @@ def render_sample_detail(hero):
                 st.markdown("---")
 
     # ---------------------------------------------------------
-    # Details
+    # Details Tab
     # ---------------------------------------------------------
 
     with tabs[1]:
@@ -631,6 +637,12 @@ def render_sample_detail(hero):
             }
         )
 
+        details["Value"] = (
+            details["Value"]
+            .fillna("—")
+            .astype(str)
+        )
+
         st.dataframe(
             details,
             use_container_width=True,
@@ -638,11 +650,15 @@ def render_sample_detail(hero):
         )
 
     # ---------------------------------------------------------
-    # Related products
+    # Related products Tab
     # ---------------------------------------------------------
 
     with tabs[2]:
         st.markdown("### Related Products")
+
+        # -----------------------------------------------------
+        # Load existing relationships
+        # -----------------------------------------------------
 
         try:
             related_products = get_sample_products(
@@ -655,20 +671,41 @@ def render_sample_detail(hero):
             )
             related_products = []
 
+        # -----------------------------------------------------
+        # Existing linked products
+        # -----------------------------------------------------
+
         if related_products:
             for product in related_products:
                 with st.container(border=True):
+
                     product_col, type_col, action_col = (
-                        st.columns([2.5, 1.3, 1])
+                        st.columns([2.8, 1.2, 1])
                     )
 
                     with product_col:
-                        st.markdown(
-                            f"**{product['product_code']}**"
-                        )
+                        if product["product_name"]:
+                            st.markdown(
+                                f"**{product['product_name']}**"
+                            )
+
+                            st.caption(
+                                product["product_code"]
+                            )
+
+                        else:
+                            st.markdown(
+                                f"**{product['product_code']}**"
+                            )
+
+                        if product["range_name"]:
+                            st.caption(
+                                f"Range: {product['range_name']}"
+                            )
 
                     with type_col:
                         st.caption("Relationship")
+
                         st.write(
                             product["relationship_type"]
                         )
@@ -680,7 +717,7 @@ def render_sample_detail(hero):
                                 f"unlink_product_"
                                 f"{product['id']}"
                             ),
-                            use_container_width=True,
+                            width="stretch",
                         ):
                             try:
                                 unlink_sample_product(
@@ -688,9 +725,7 @@ def render_sample_detail(hero):
                                         sample_record_id
                                     ),
                                     product_code=(
-                                        product[
-                                            "product_code"
-                                        ]
+                                        product["product_code"]
                                     ),
                                 )
 
@@ -701,6 +736,21 @@ def render_sample_detail(hero):
                                 )
 
                             else:
+                                product_label = (
+                                    product["product_name"]
+                                    or product["product_code"]
+                                )
+
+                                st.session_state[
+                                    "product_link_flash"
+                                ] = {
+                                    "type": "success",
+                                    "message": (
+                                        f"{product_label} "
+                                        f"unlinked successfully."
+                                    ),
+                                }
+
                                 st.rerun()
 
         else:
@@ -708,23 +758,43 @@ def render_sample_detail(hero):
                 "No products are linked to this sample yet."
             )
 
-        
-        try:
-            related_products = get_sample_products(
-                sample_record_id
-            )
 
+        if product_flash:
+            if product_flash["type"] == "success":
+                st.success(
+                    product_flash["message"]
+                )
+
+            elif product_flash["type"] == "error":
+                st.error(
+                    product_flash["message"]
+                )
+
+        # -----------------------------------------------------
+        # Link new product
+        # -----------------------------------------------------
+
+        st.markdown("#### Link Product")
+
+        product_scope = st.radio(
+            "Product selection",
+            [
+                "Same Category",
+                "All Active Products",
+            ],
+            horizontal=True,
+            key="related_product_scope",
+        )
+
+        try:
             if (
-                product_scope
-                == "Same Category"
+                product_scope == "Same Category"
                 and sample["category_code"]
             ):
-                active_products = (
-                    get_active_products(
-                        category_code=(
-                            sample["category_code"]
-                        )
-                    )
+                active_products = get_active_products(
+                    category_code=sample[
+                        "category_code"
+                    ]
                 )
 
             else:
@@ -734,76 +804,133 @@ def render_sample_detail(hero):
 
         except Exception as exc:
             st.error(
-                f"Could not load product "
-                f"relationships: {exc}"
+                f"Could not load products: {exc}"
             )
-
-            related_products = []
             active_products = []
 
+        # -----------------------------------------------------
+        # Exclude already-linked products
+        # -----------------------------------------------------
 
-        st.markdown("#### Link Product")
+        linked_product_codes = {
+            product["product_code"]
+            for product in related_products
+        }
 
-        with st.form(
-            "link_product_form",
-            clear_on_submit=True,
-        ):
-            product_code = st.text_input(
-                "Product Code *",
-                placeholder="e.g. 0247304-001",
-            )
+        available_products = [
+            product
+            for product in active_products
+            if product["product_code"]
+            not in linked_product_codes
+        ]
 
-            relationship_type = st.selectbox(
-                "Relationship",
-                [
-                    "Primary",
-                    "Compatible",
-                    "Accessory",
-                    "Reference",
-                ],
-            )
+        # -----------------------------------------------------
+        # Product selector
+        # -----------------------------------------------------
 
-            link_product_submit = (
-                st.form_submit_button(
-                    "Link Product",
-                    type="primary",
-                    use_container_width=True,
-                )
-            )
-
-        if link_product_submit:
-            if not product_code.strip():
-                st.error(
-                    "Product Code is required."
+        if not available_products:
+            if product_scope == "Same Category":
+                st.info(
+                    "No additional active products were found "
+                    "in this sample's category. "
+                    "Try All Active Products."
                 )
 
             else:
-                try:
-                    link_sample_product(
-                        sample_record_id=(
-                            sample_record_id
-                        ),
-                        product_code=(
-                            product_code.strip()
-                        ),
-                        relationship_type=(
-                            relationship_type
-                        ),
-                    )
+                st.info(
+                    "No additional active products are available."
+                )
 
-                except Exception as exc:
+        else:
+            product_options = {
+                (
+                    f"{item['product_name']} "
+                    f"· {item['product_code']}"
+                ): item
+                for item in available_products
+            }
+
+            with st.form(
+                "link_product_form",
+                clear_on_submit=True,
+            ):
+                product_label = st.selectbox(
+                    "Product *",
+                    options=[
+                        "Select a Product",
+                        *product_options.keys(),
+                    ],
+                )
+
+                relationship_type = st.selectbox(
+                    "Relationship",
+                    [
+                        "Primary",
+                        "Compatible",
+                        "Accessory",
+                        "Reference",
+                    ],
+                )
+
+                link_product_submit = (
+                    st.form_submit_button(
+                        "Link Product",
+                        type="primary",
+                        width="stretch",
+                    )
+                )
+
+            if link_product_submit:
+                if (
+                    product_label
+                    == "Select a Product"
+                ):
                     st.error(
-                        f"Could not link product: {exc}"
+                        "Please select a Product."
                     )
 
                 else:
-                    st.success(
-                        "Product linked successfully."
+                    selected_product = (
+                        product_options[
+                            product_label
+                        ]
                     )
-                    st.rerun()
+
+                    try:
+                        link_sample_product(
+                            sample_record_id=(
+                                sample_record_id
+                            ),
+                            product_code=(
+                                selected_product[
+                                    "product_code"
+                                ]
+                            ),
+                            relationship_type=(
+                                relationship_type
+                            ),
+                        )
+
+                    except Exception as exc:
+                        st.error(
+                            f"Could not link product: {exc}"
+                        )
+
+                    else:
+                        st.session_state[
+                            "product_link_flash"
+                        ] = {
+                            "type": "success",
+                            "message": (
+                                f"{selected_product['product_name']} "
+                                f"linked successfully."
+                            ),
+                        }
+
+                        st.rerun()
 
     # ---------------------------------------------------------
-    # Media
+    # Media Tab
     # ---------------------------------------------------------
 
     with tabs[3]:
