@@ -26,6 +26,18 @@ def apply_styles():
         .timeline-date {color: #64748b; font-size: .8rem;}
         .timeline-title {font-weight: 700; color: #0f172a;}
         .small-muted {color: #64748b; font-size: .88rem;}
+
+        div[data-testid="stButton"] > button[kind="primary"] {
+            background-color: #2563eb !important;
+            color: white !important;
+            border-color: #2563eb !important;
+        }
+
+        div[data-testid="stButton"] > button[kind="primary"]:hover {
+            background-color: #1d4ed8 !important;
+            color: white !important;
+            border-color: #1d4ed8 !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,

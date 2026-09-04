@@ -3,17 +3,17 @@ from pathlib import Path
 from db.connection import get_connection
 
 
-def setup_database():
-    schema_sql = Path(
-        "db/schema.sql"
+def reset_database():
+    reset_sql = Path(
+        "db/reset_sample_schema.sql"
     ).read_text(encoding="utf-8")
 
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(schema_sql)
+            cur.execute(reset_sql)
 
-    print("Database schema created successfully.")
+    print("Sample schema reset successfully.")
 
 
 if __name__ == "__main__":
-    setup_database()
+    reset_database()

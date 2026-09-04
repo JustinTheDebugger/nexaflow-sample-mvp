@@ -6,6 +6,20 @@ import streamlit as st
 from data import SAMPLES, BOOKINGS, TIMELINE, ACTIVITY
 from styles import apply_styles
 
+from pages_ui.sample_search import (
+    render_sample_search,
+)
+
+from repositories.sample_repository import (
+    create_samples,
+    get_categories,
+    get_sample_locations,
+    get_sample_types,
+)
+
+from utils.qr import build_sample_qr
+from utils.tag import build_warehouse_tag
+
 st.set_page_config(page_title="NexaFlow Asset Tracking", page_icon="◈", layout="wide")
 apply_styles()
 
@@ -99,6 +113,24 @@ def location_from_parts(base, rack="", bin_location=""):
         parts.append(bin_location.strip())
     return " · ".join(parts)
 
+def reset_sample_intake_form():
+    st.session_state.pop("intake_success", None)
+
+    keys = [
+        "intake_sample_type",
+        "intake_received_date",
+        "intake_sample_name",
+        "intake_location",
+        "intake_quantity",
+        "intake_category",
+        "intake_source",
+        "intake_condition",
+        "intake_notes",
+    ]
+
+    for key in keys:
+        st.session_state.pop(key, None)
+
 with st.sidebar:
     st.markdown("## ◈ NexaFlow")
     st.caption("Asset Tracking & Operational Visibility")
@@ -186,47 +218,8 @@ if page == "Executive Dashboard":
     )
 
 elif page == "Sample Search":
-    hero(
-        "Find a Sample",
-        "Search by product, sample ID, category, holder, or location. Availability is calculated from operational records.",
-    )
-
-    query = st.text_input("Search", placeholder="Try: Aerospeed, Marketing, Warehouse B, SMP-001...")
-    filtered = samples.copy()
-
-    if query:
-        searchable = filtered.astype(str).agg(" ".join, axis=1).str.lower()
-        filtered = filtered[searchable.str.contains(query.lower(), na=False)]
-
-    status_filter = st.multiselect("Operational state", sorted(samples["status"].unique()))
-    if status_filter:
-        filtered = filtered[filtered["status"].isin(status_filter)]
-
-    st.caption(f"{len(filtered)} sample(s) found")
-
-    for _, sample in filtered.iterrows():
-        with st.container(border=True):
-            c1, c2, c3, c4 = st.columns([2.2, 1.3, 1.5, 1])
-            with c1:
-                st.markdown(f"### {sample['product_name']}")
-                st.caption(f"{sample['sample_id']} · {sample['product_code']}")
-                st.write(availability_text(sample))
-            with c2:
-                st.markdown("**Current holder**")
-                st.write(sample["holder"])
-                st.caption(sample["holder_team"])
-            with c3:
-                st.markdown("**Location**")
-                st.write(sample["location"])
-                st.caption(f"Condition: {sample['condition']}")
-            with c4:
-                st.markdown("**Next booking**")
-                if pd.notna(sample["next_booking"]):
-                    st.write(sample["next_booking"].strftime("%d %b"))
-                    st.caption(sample["next_booking_team"])
-                else:
-                    st.write("None")
-                    st.caption("No booking")
+    render_sample_search(hero)
+    
 
 elif page == "Sample Detail":
     hero(
@@ -318,64 +311,427 @@ elif page == "Sample Detail":
 elif page == "Sample Intake":
     hero(
         "Sample Intake",
-        "Create the physical asset record at the moment a sample enters the business. This becomes the first event in its lifecycle.",
+        "Register new physical samples and begin their NexaFlow lifecycle.",
     )
 
-    with st.form("sample_intake_form", clear_on_submit=True):
-        c1, c2 = st.columns(2)
+    # ---------------------------------------------------------
+    # Load reference data from NeonDB
+    # ---------------------------------------------------------
 
-        with c1:
-            product_name = st.text_input("Product name *")
-            product_code = st.text_input("Product code *")
-            category = st.selectbox("Category", ["Tent", "Shelter", "Furniture", "Sleeping", "Accessory", "Other"])
-            source = st.selectbox("Source", ["Factory", "Supplier", "Customer Return", "Internal Transfer", "Other"])
-            received_date = st.date_input("Received date", value=today)
+    sample_types = get_sample_types()
+    locations = get_sample_locations()
+    categories = get_categories()
 
-        with c2:
-            condition = st.selectbox("Condition on receipt", ["Excellent", "Good", "Fair", "Damaged"])
-            warehouse = st.selectbox("Initial warehouse", ["Warehouse A", "Warehouse B", "Office", "Other"])
-            rack = st.text_input("Rack / area")
-            bin_location = st.text_input("Bin / position")
-            purpose = st.selectbox(
-                "Primary sample purpose",
-                ["General sample", "Marketing", "Sales", "Trade show", "Photography", "Product testing", "Factory review"],
+    sample_type_options = {
+        f"{item['code']} · {item['name']}": item
+        for item in sample_types
+    }
+
+    location_options = {
+        f"{item['code']} · {item['name']}": item
+        for item in locations
+    }
+
+    category_options = {
+        f"{item['category_code']} · {item['category_name']}": item
+        for item in categories
+    }
+
+    st.markdown("### New Sample")
+
+    # ---------------------------------------------------------
+    # Success screen
+    # ---------------------------------------------------------
+
+    success = st.session_state.get("intake_success")
+
+    if success:
+        st.success(
+            f"{success['count']} sample(s) created successfully."
+        )
+
+        st.markdown("#### Created Samples")
+
+        for sample in success["samples"]:
+            qr_bytes, qr_url = build_sample_qr(
+                sample["sample_id"]
             )
 
-        notes = st.text_area("Notes")
-        submitted = st.form_submit_button("Create Asset Record", use_container_width=True)
-
-    if submitted:
-        if not product_name.strip() or not product_code.strip():
-            st.error("Product name and product code are required.")
-        else:
-            sample_id = next_sample_id()
-            location = location_from_parts(warehouse, rack, bin_location)
-
-            st.session_state.samples.append(
-                {
-                    "sample_id": sample_id,
-                    "product_name": product_name.strip(),
-                    "product_code": product_code.strip(),
-                    "category": category,
-                    "location": location,
-                    "holder": "Warehouse",
-                    "holder_team": "Operations",
-                    "condition": condition,
-                    "usage_count": 0,
-                    "last_inspection": received_date,
-                    "photo": "",
-                    "next_available": received_date,
-                    "next_booking": None,
-                    "next_booking_team": None,
-                    "status": "Available Today" if received_date <= today else "Incoming",
-                    "notes": notes.strip() or f"Created as {purpose.lower()}.",
-                    "source": source,
-                    "received_date": received_date,
-                }
+            warehouse_tag = build_warehouse_tag(
+                sample_id=sample["sample_id"],
+                sample_name=sample["sample_name"],
+                location_name=sample["location_name"],
+                qr_bytes=qr_bytes,
             )
-            add_event(sample_id, f"Received from {source}", f"Asset created. Initial location: {location}. Purpose: {purpose}.")
-            add_activity(f"{product_name.strip()} added as {sample_id}", "Intake")
-            st.success(f"{sample_id} created successfully.")
+
+            st.markdown(
+                f"### {sample['sample_name']} "
+                f"({sample['location_code']})"
+            )
+
+            st.caption(
+                sample["sample_id"]
+            )
+
+            button_col1, button_col2 = st.columns(2)
+
+            with button_col1:
+                st.download_button(
+                    "Download QR",
+                    data=qr_bytes,
+                    file_name=f"{sample['sample_id']}_qr.png",
+                    mime="image/png",
+                    use_container_width=True,
+                )
+
+            with button_col2:
+                st.download_button(
+                    "Download Warehouse Tag",
+                    data=warehouse_tag,
+                    file_name=f"{sample['sample_id']}_tag.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    type="primary",
+                )   
+
+
+        st.write("")
+
+        if st.button(
+            "Create Another Sample",
+            use_container_width=True,
+            type="primary",
+        ):
+            reset_sample_intake_form()
+            st.rerun()
+
+    # ---------------------------------------------------------
+    # New sample form
+    # Only shown when there is no success result
+    # ---------------------------------------------------------
+
+    else:
+        # -----------------------------------------------------
+        # Live control
+        # -----------------------------------------------------
+
+        live_col1, live_col2 = st.columns(2)
+
+        with live_col1:
+            sample_type_label = st.selectbox(
+                "Sample Type *",
+                options=[
+                    "Select a Sample Type",
+                    *sample_type_options.keys(),
+                ],
+                key="intake_sample_type",
+            )
+
+        with live_col2:
+            received_date = st.date_input(
+                "Received Date *",
+                value=today,
+                key="intake_received_date",
+            )
+
+        # -----------------------------------------------------
+        # Intake form
+        # -----------------------------------------------------
+
+        with st.form(
+            "sample_intake_form",
+            clear_on_submit=False,
+        ):
+            col1, col2 = st.columns(2)
+
+            # -------------------------------------------------
+            # Left column
+            # -------------------------------------------------
+
+            with col1:
+                sample_name_col, suffix_col = st.columns(
+                    [2.2, 1]
+                )
+
+                with sample_name_col:
+                    sample_name_input = st.text_input(
+                        "Sample Name *",
+                        placeholder="e.g. Megadome 150",
+                        key="intake_sample_name",
+                    )
+
+                with suffix_col:
+                    if (
+                        sample_type_label
+                        != "Select a Sample Type"
+                    ):
+                        preview_type = sample_type_options[
+                            sample_type_label
+                        ]
+
+                        suffix_text = (
+                            f"- {received_date.year} "
+                            f"{preview_type['name']}"
+                        )
+
+                    else:
+                        suffix_text = (
+                            f"- {received_date.year} Sample"
+                        )
+
+                    st.markdown(
+                        "<div style='padding-top: 2.1rem;'>"
+                        f"<strong>{suffix_text}</strong>"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                location_label = st.selectbox(
+                    "Location *",
+                    options=[
+                        "Please Select a Location",
+                        *location_options.keys(),
+                    ],
+                    key="intake_location",
+                )
+
+                category_label = st.selectbox(
+                    "Category *",
+                    options=[
+                        "Please Select a Category",
+                        *category_options.keys(),
+                    ],
+                    key="intake_category",
+                )
+
+                
+
+            # -------------------------------------------------
+            # Right column
+            # -------------------------------------------------
+
+            with col2:
+                source = st.selectbox(
+                    "Source",
+                    [
+                        "Supplier",
+                        "Customer Return",
+                        "Internal Transfer",
+                        "Other",
+                    ],
+                    index=0,
+                    key="intake_source",
+                )
+
+                condition = st.selectbox(
+                    "Condition on Receipt",
+                    [
+                        "Excellent",
+                        "Good",
+                        "Fair",
+                        "Damaged",
+                    ],
+                    index=1,
+                    key="intake_condition",
+                )
+
+                quantity = st.number_input(
+                    "Number of Samples *",
+                    min_value=1,
+                    max_value=100,
+                    value=1,
+                    step=1,
+                    key="intake_quantity",
+                )
+
+            notes = st.text_area(
+                "Notes",
+                placeholder=(
+                    "Revision details, condition notes, etc."
+                ),
+                key="intake_notes",
+            )
+
+
+            # -------------------------------------------------
+            # Operational rules
+            # -------------------------------------------------
+
+            if (
+                sample_type_label
+                != "Select a Sample Type"
+            ):
+                selected_type_preview = (
+                    sample_type_options[
+                        sample_type_label
+                    ]
+                )
+
+                st.markdown("---")
+
+                rule_cols = st.columns(3)
+
+                with rule_cols[0]:
+                    st.caption("Sample Type")
+                    st.write(
+                        selected_type_preview["name"]
+                    )
+
+                with rule_cols[1]:
+                    st.caption("Booking")
+
+                    if selected_type_preview[
+                        "is_bookable"
+                    ]:
+                        st.write("Bookable")
+                    else:
+                        st.write("Not Bookable")
+
+                with rule_cols[2]:
+                    st.caption("Approval")
+
+                    if selected_type_preview[
+                        "requires_approval"
+                    ]:
+                        st.write("Required")
+                    else:
+                        st.write("Not Required")
+
+            # -------------------------------------------------
+            # Submit
+            # -------------------------------------------------
+
+            st.markdown("---")
+
+            submit_label = (
+                "Create Sample"
+                if quantity == 1
+                else f"Create {quantity} Samples"
+            )
+
+            submitted = st.form_submit_button(
+                submit_label,
+                use_container_width=True,
+            )
+
+        # -----------------------------------------------------
+        # Process submission
+        # -----------------------------------------------------
+
+        if submitted:
+            if not sample_name_input.strip():
+                st.error(
+                    "Sample Name is required."
+                )
+
+            elif (
+                sample_type_label
+                == "Select a Sample Type"
+            ):
+                st.error(
+                    "Please select a Sample Type."
+                )
+
+            elif (
+                location_label
+                == "Please Select a Location"
+            ):
+                st.error(
+                    "Please select a Location."
+                )
+
+            elif (
+                category_label
+                == "Please Select a Category"
+            ):
+                st.error(
+                    "Please select a Category."
+                )
+
+            else:
+                selected_type = (
+                    sample_type_options[
+                        sample_type_label
+                    ]
+                )
+
+                selected_location = (
+                    location_options[
+                        location_label
+                    ]
+                )
+
+                selected_category = (
+                    category_options[
+                        category_label
+                    ]
+                )
+
+                generated_sample_name = (
+                    f"{sample_name_input.strip()} "
+                    f"- {received_date.year} "
+                    f"{selected_type['name']}"
+                )
+
+                try:
+                    created_samples = create_samples(
+                        sample_name=generated_sample_name,
+                        category_code=(
+                            selected_category[
+                                "category_code"
+                            ]
+                        ),
+                        sample_type_id=(
+                            selected_type["id"]
+                        ),
+                        sample_type_code=(
+                            selected_type["code"]
+                        ),
+                        location_id=(
+                            selected_location["id"]
+                        ),
+                        location_code=(
+                            selected_location["code"]
+                        ),
+                        source=source,
+                        received_date=received_date,
+                        condition=condition,
+                        notes=notes.strip(),
+                        quantity=int(quantity),
+                    )
+
+                except Exception as exc:
+                    st.error(
+                        f"Could not create samples: {exc}"
+                    )
+
+                else:
+                    st.session_state[
+                        "intake_success"
+                    ] = {
+                        "count": len(
+                            created_samples
+                        ),
+                        "samples": [
+                            {
+                                "sample_id": sample[
+                                    "sample_id"
+                                ],
+                                "sample_name": sample[
+                                    "sample_name"
+                                ],
+                                "location_code": (
+                                    selected_location[
+                                        "code"
+                                    ]
+                                ),
+                                "location_name": selected_location["name"],
+                            }
+                            for sample in created_samples
+                        ],
+                    }
+
+                    st.rerun()
 
 elif page == "QR Action Hub":
     hero(

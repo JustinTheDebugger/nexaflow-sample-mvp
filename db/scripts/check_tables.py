@@ -1,4 +1,4 @@
-from database import get_connection
+from db.connection import get_connection
 
 
 def check_tables():
