@@ -25,6 +25,10 @@ from pages_ui.sample_booking import (
     render_sample_booking,
 )
 
+from pages_ui.sample_booking_management import (
+    render_sample_booking_management,
+)
+
 from utils.qr import build_sample_qr
 from utils.tag import build_warehouse_tag
 
@@ -156,6 +160,7 @@ with st.sidebar:
             "Sample Search",
             "Sample Detail",
             "Sample Intake",
+            "Sample Booking Management",
             "Sample Booking",
             "QR Action Hub",
         ],
@@ -668,6 +673,9 @@ elif page == "Sample Intake":
 
 elif page == "Sample Booking":
     render_sample_booking(hero)
+
+elif page == "Sample Booking Management":
+    render_sample_booking_management(hero)
 
 elif page == "QR Action Hub":
     hero(

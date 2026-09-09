@@ -837,15 +837,7 @@ def create_sample_booking(
                     "for the selected dates."
                 )
 
-            requires_approval = sample[
-                "requires_approval"
-            ]
-
-            booking_status = (
-                "Pending Approval"
-                if requires_approval
-                else "Reserved"
-            )
+            booking_status = "Reserved"
 
             cur.execute(
                 """
@@ -873,6 +865,7 @@ def create_sample_booking(
                 )
                 RETURNING
                     id,
+                    sample_record_id,
                     booking_status;
                 """,
                 (
@@ -883,7 +876,7 @@ def create_sample_booking(
                     start_date,
                     end_date,
                     booking_status,
-                    requires_approval,
+                    False,
                     notes,
                 ),
             )
@@ -920,3 +913,565 @@ def create_sample_booking(
             )
 
             return booking
+
+
+def get_bookings():
+    query = """
+        SELECT
+            sb.id,
+            sb.sample_record_id,
+            sb.booked_by,
+            sb.team,
+            sb.purpose,
+            sb.start_date,
+            sb.end_date,
+            sb.booking_status,
+            sb.notes,
+            sb.created_at,
+
+            sm.sample_id,
+            sm.sample_name,
+
+            sl.code AS location_code,
+            sl.name AS location_name
+
+        FROM sample_bookings sb
+
+        JOIN sample_master sm
+            ON sm.id = sb.sample_record_id
+
+        LEFT JOIN sample_locations sl
+            ON sl.id = sm.current_location_id
+
+        ORDER BY
+            sb.start_date,
+            sb.created_at;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query)
+            return cur.fetchall()
+
+
+def cancel_booking(
+    *,
+    booking_id,
+    cancelled_by,
+    reason,
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                UPDATE sample_bookings
+                SET
+                    booking_status = 'Cancelled',
+                    updated_at = NOW()
+                WHERE id = %s
+                  AND booking_status = 'Reserved'
+                RETURNING
+                    id,
+                    sample_record_id;
+                """,
+                (booking_id,),
+            )
+
+            booking = cur.fetchone()
+
+            if booking is None:
+                raise ValueError(
+                    "Booking could not be cancelled."
+                )
+
+            cur.execute(
+                """
+                INSERT INTO sample_events (
+                    sample_record_id,
+                    event_type,
+                    title,
+                    details
+                )
+                VALUES (
+                    %s,
+                    'BOOKING_CANCELLED',
+                    'Booking Cancelled',
+                    %s
+                );
+                """,
+                (
+                    booking["sample_record_id"],
+                    (
+                        f"Cancelled by {cancelled_by}. "
+                        f"Reason: {reason}"
+                    ),
+                ),
+            )
+
+            return booking
+
+def create_sample_request(
+    *,
+    product_code,
+    requested_sample_name,
+    category_code,
+    quantity_required,
+    required_from,
+    required_until,
+    requested_by,
+    requester_email,
+    team,
+    purpose,
+    request_notes,
+):
+    query = """
+        INSERT INTO sample_requests (
+            product_code,
+            requested_sample_name,
+            category_code,
+            quantity_required,
+            required_from,
+            required_until,
+            requested_by,
+            requester_email,
+            team,
+            purpose,
+            request_notes
+        )
+        VALUES (
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s
+        )
+        RETURNING
+            id,
+            request_status;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                (
+                    product_code,
+                    requested_sample_name,
+                    category_code,
+                    quantity_required,
+                    required_from,
+                    required_until,
+                    requested_by,
+                    requester_email,
+                    team,
+                    purpose,
+                    request_notes,
+                ),
+            )
+
+            return cur.fetchone()
+
+
+def get_sample_requests():
+    query = """
+        SELECT
+            sr.*,
+            p.product_name
+
+        FROM sample_requests sr
+
+        LEFT JOIN products p
+            ON p.product_code = sr.product_code
+
+        ORDER BY
+            CASE
+                WHEN sr.request_status = 'Pending Review'
+                THEN 0
+                ELSE 1
+            END,
+            sr.created_at DESC;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query)
+            return cur.fetchall()
+
+
+def approve_sample_request(
+    *,
+    request_id,
+    reviewed_by,
+    operations_email,
+    manager_notes,
+):
+    query = """
+        UPDATE sample_requests
+        SET
+            request_status = 'Approved',
+            reviewed_by = %s,
+            reviewed_at = NOW(),
+            operations_email = %s,
+            manager_notes = %s,
+            rejection_reason = NULL,
+            updated_at = NOW()
+        WHERE id = %s
+          AND request_status = 'Pending Review'
+        RETURNING *;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                (
+                    reviewed_by,
+                    operations_email,
+                    manager_notes,
+                    request_id,
+                ),
+            )
+
+            request = cur.fetchone()
+
+            if request is None:
+                raise ValueError(
+                    "Request could not be approved."
+                )
+
+            return request
+
+
+def reject_sample_request(
+    *,
+    request_id,
+    reviewed_by,
+    rejection_reason,
+):
+    query = """
+        UPDATE sample_requests
+        SET
+            request_status = 'Rejected',
+            reviewed_by = %s,
+            reviewed_at = NOW(),
+            rejection_reason = %s,
+            updated_at = NOW()
+        WHERE id = %s
+          AND request_status = 'Pending Review'
+        RETURNING *;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                (
+                    reviewed_by,
+                    rejection_reason,
+                    request_id,
+                ),
+            )
+
+            request = cur.fetchone()
+
+            if request is None:
+                raise ValueError(
+                    "Request could not be rejected."
+                )
+
+            return request
+
+def search_available_samples(
+    *,
+    search_text,
+    start_date,
+    end_date,
+    limit=25,
+):
+    search_pattern = f"%{search_text.strip()}%"
+
+    query = """
+        SELECT DISTINCT
+            sm.id AS sample_record_id,
+            sm.sample_id,
+            sm.sample_name,
+            sm.asset_state,
+
+            st.code AS sample_type_code,
+            st.name AS sample_type_name,
+
+            sl.code AS location_code,
+            sl.name AS location_name
+
+        FROM sample_master sm
+
+        JOIN sample_types st
+            ON st.id = sm.sample_type_id
+
+        LEFT JOIN sample_locations sl
+            ON sl.id = sm.current_location_id
+
+        LEFT JOIN sample_products sp
+            ON sp.sample_record_id = sm.id
+
+        WHERE sm.asset_state = 'Active'
+
+          AND st.is_bookable = TRUE
+
+          AND (
+                sm.sample_id ILIKE %s
+                OR sm.sample_name ILIKE %s
+                OR sp.product_code ILIKE %s
+          )
+
+          AND NOT EXISTS (
+              SELECT 1
+
+              FROM sample_bookings sb
+
+              WHERE sb.sample_record_id = sm.id
+
+                AND sb.booking_status = 'Reserved'
+
+                AND sb.start_date <= %s
+
+                AND sb.end_date >= %s
+          )
+
+        ORDER BY
+            sm.sample_name,
+            sm.sample_id
+
+        LIMIT %s;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                (
+                    search_pattern,
+                    search_pattern,
+                    search_pattern,
+                    end_date,
+                    start_date,
+                    limit,
+                ),
+            )
+
+            return cur.fetchall()
+
+def create_sample_bookings(
+    *,
+    sample_record_ids,
+    booked_by,
+    team,
+    purpose,
+    start_date,
+    end_date,
+    notes,
+):
+    if not sample_record_ids:
+        raise ValueError(
+            "At least one sample must be selected."
+        )
+
+    if end_date < start_date:
+        raise ValueError(
+            "Required Until cannot be before Required From."
+        )
+
+    created_bookings = []
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            # -------------------------------------------------
+            # Lock all selected physical sample records
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                SELECT
+                    sm.id,
+                    sm.sample_id,
+                    sm.sample_name,
+                    sm.asset_state,
+                    st.is_bookable
+
+                FROM sample_master sm
+
+                JOIN sample_types st
+                    ON st.id = sm.sample_type_id
+
+                WHERE sm.id = ANY(%s::uuid[])
+
+                FOR UPDATE;
+                """,
+                (sample_record_ids,),
+            )
+
+            samples = cur.fetchall()
+
+            if len(samples) != len(sample_record_ids):
+                raise ValueError(
+                    "One or more selected samples "
+                    "could not be found."
+                )
+
+            # -------------------------------------------------
+            # Validate sample state
+            # -------------------------------------------------
+
+            for sample in samples:
+                if sample["asset_state"] != "Active":
+                    raise ValueError(
+                        (
+                            f"{sample['sample_name']} "
+                            f"({sample['sample_id']}) "
+                            f"is no longer active."
+                        )
+                    )
+
+                if not sample["is_bookable"]:
+                    raise ValueError(
+                        (
+                            f"{sample['sample_name']} "
+                            f"({sample['sample_id']}) "
+                            f"is not bookable."
+                        )
+                    )
+
+            # -------------------------------------------------
+            # Recheck date availability inside transaction
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                SELECT
+                    sb.sample_record_id,
+                    sm.sample_id,
+                    sm.sample_name
+
+                FROM sample_bookings sb
+
+                JOIN sample_master sm
+                    ON sm.id = sb.sample_record_id
+
+                WHERE sb.sample_record_id
+                    = ANY(%s::uuid[])
+
+                  AND sb.booking_status = 'Reserved'
+
+                  AND sb.start_date <= %s
+
+                  AND sb.end_date >= %s;
+                """,
+                (
+                    sample_record_ids,
+                    end_date,
+                    start_date,
+                ),
+            )
+
+            conflicts = cur.fetchall()
+
+            if conflicts:
+                conflict_names = ", ".join(
+                    (
+                        f"{row['sample_name']} "
+                        f"({row['sample_id']})"
+                    )
+                    for row in conflicts
+                )
+
+                raise ValueError(
+                    (
+                        "The following sample(s) are no longer "
+                        f"available: {conflict_names}"
+                    )
+                )
+
+            # -------------------------------------------------
+            # Create bookings
+            # -------------------------------------------------
+
+            for sample in samples:
+                cur.execute(
+                    """
+                    INSERT INTO sample_bookings (
+                        sample_record_id,
+                        booked_by,
+                        team,
+                        purpose,
+                        start_date,
+                        end_date,
+                        booking_status,
+                        approval_required,
+                        notes
+                    )
+                    VALUES (
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        'Reserved',
+                        FALSE,
+                        %s
+                    )
+                    RETURNING
+                        id,
+                        sample_record_id,
+                        booking_status;
+                    """,
+                    (
+                        sample["id"],
+                        booked_by,
+                        team,
+                        purpose,
+                        start_date,
+                        end_date,
+                        notes,
+                    ),
+                )
+
+                booking = cur.fetchone()
+
+                created_bookings.append(
+                    booking
+                )
+
+                # ---------------------------------------------
+                # Lifecycle event
+                # ---------------------------------------------
+
+                cur.execute(
+                    """
+                    INSERT INTO sample_events (
+                        sample_record_id,
+                        event_type,
+                        title,
+                        details
+                    )
+                    VALUES (
+                        %s,
+                        'BOOKING_CREATED',
+                        'Sample Booked',
+                        %s
+                    );
+                    """,
+                    (
+                        sample["id"],
+                        (
+                            f"Booked by {booked_by} "
+                            f"from {start_date:%d %b %Y} "
+                            f"to {end_date:%d %b %Y}. "
+                            f"Purpose: {purpose}."
+                        ),
+                    ),
+                )
+
+        conn.commit()
+
+    return created_bookings
