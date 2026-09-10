@@ -4,7 +4,7 @@ import streamlit as st
 
 from repositories.sample_repository import (
     approve_sample_request,
-    cancel_booking,
+    cancel_booking_group,
     get_booking_group_details,
     get_booking_groups,
     get_sample_requests,
@@ -24,6 +24,50 @@ def render_sample_booking_management(hero):
         ),
     )
 
+    st.markdown(
+        """
+        <style>
+        /* View button - blue */
+        .st-key-booking_view button {
+            background-color: #2563eb !important;
+            color: white !important;
+            border: 1px solid #2563eb !important;
+        }
+
+        .st-key-booking_view button:hover {
+            background-color: #1d4ed8 !important;
+            border-color: #1d4ed8 !important;
+        }
+
+        /* Print button - white */
+        .st-key-booking_print button {
+            background-color: white !important;
+            color: #1f2937 !important;
+            border: 1px solid #d1d5db !important;
+        }
+
+        .st-key-booking_print button:hover {
+            background-color: #f3f4f6 !important;
+            border-color: #9ca3af !important;
+        }
+
+        /* Cancel button - red */
+        div[class*="st-key-booking_cancel_"] button {
+            background-color: #dc2626 !important;
+            color: white !important;
+            border: 1px solid #dc2626 !important;
+        }
+
+        div[class*="st-key-booking_cancel_"] button:hover {
+            background-color: #b91c1c !important;
+            color: white !important;
+            border-color: #b91c1c !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     flash = st.session_state.pop(
         "booking_management_flash",
         None,
@@ -31,34 +75,46 @@ def render_sample_booking_management(hero):
 
     if flash:
         if flash["type"] == "success":
-            st.success(flash["message"])
+            st.success(
+                flash["message"]
+            )
         else:
-            st.error(flash["message"])
+            st.error(
+                flash["message"]
+            )
+
+    # ---------------------------------------------------------
+    # Load page data
+    # ---------------------------------------------------------
+
+    sample_requests = []
+    upcoming_bookings = []
+    booking_history = []
 
     try:
         sample_requests = get_sample_requests()
+
+        upcoming_bookings = get_booking_groups(
+            status="Reserved",
+            upcoming_only=True,
+        )
+
+        booking_history = get_booking_groups()
 
     except Exception as exc:
         st.error(
             f"Could not load booking management data: {exc}"
         )
-        return
 
-    today = date.today()
+    # ---------------------------------------------------------
+    # Derived lists
+    # ---------------------------------------------------------
 
-    try:
-        booking_history = get_booking_groups()
-
-    except Exception as exc:
-        st.error(
-            f"Could not load booking history: {exc}"
-        )
-        booking_history = []
-
-
-    upcoming_bookings = get_booking_groups(
-        status="Reserved",
-    )
+    pending_requests = [
+        request
+        for request in sample_requests
+        if request["request_status"] == "Pending Review"
+    ]
 
     historical_bookings = [
         booking
@@ -70,19 +126,15 @@ def render_sample_booking_management(hero):
         )
     ]
 
-    booking_history = get_booking_groups()
-
-    pending_requests = [
-        request
-        for request in sample_requests
-        if request["request_status"] == "Pending Review"
-    ]
+    # ---------------------------------------------------------
+    # Tabs
+    # ---------------------------------------------------------
 
     tabs = st.tabs(
         [
             f"Upcoming Bookings ({len(upcoming_bookings)})",
             f"Sample Requests ({len(pending_requests)})",
-            "Booking History",
+            f"Booking History ({len(historical_bookings)})",
         ]
     )
 
@@ -91,16 +143,6 @@ def render_sample_booking_management(hero):
     # ---------------------------------------------------------
 
     with tabs[0]:
-
-        try:
-            upcoming_bookings = get_booking_groups(
-                status="Reserved",
-            )
-        except Exception as exc:
-            st.error(
-                f"Could not load upcoming bookings: {exc}"
-            )
-            upcoming_bookings = []
 
         st.subheader(
             f"Upcoming Bookings "
@@ -118,29 +160,27 @@ def render_sample_booking_management(hero):
                 with st.container(border=True):
 
                     col1, col2, col3, col4, col5 = st.columns(
-                        [1.4, 2.4, 1.7, 0.8, 1.2]
+                        [1.4, 2.4, 1.7, 0.8, 1.1],
+                        vertical_alignment="center",
                     )
 
-                    # -----------------------------------------------------
-                    # Booking number / requester
-                    # -----------------------------------------------------
+                    # -----------------------------------------
+                    # Booking
+                    # -----------------------------------------
 
                     with col1:
-
                         st.write(
                             f"**{booking['booking_number']}**"
                         )
-
                         st.caption(
                             booking["booked_by"]
                         )
 
-                    # -----------------------------------------------------
-                    # Dates / purpose
-                    # -----------------------------------------------------
+                    # -----------------------------------------
+                    # Dates
+                    # -----------------------------------------
 
                     with col2:
-
                         st.write(
                             (
                                 f"{booking['start_date']:%d %b %Y}"
@@ -154,20 +194,18 @@ def render_sample_booking_management(hero):
                             or "No purpose"
                         )
 
-                    # -----------------------------------------------------
-                    # Sample count / department
-                    # -----------------------------------------------------
+                    # -----------------------------------------
+                    # Samples
+                    # -----------------------------------------
 
                     with col3:
-
                         sample_count = booking[
                             "sample_count"
                         ]
 
                         st.write(
                             (
-                                f"**{sample_count} "
-                                f"sample"
+                                f"**{sample_count} sample"
                                 f"{'s' if sample_count != 1 else ''}**"
                             )
                         )
@@ -177,32 +215,38 @@ def render_sample_booking_management(hero):
                             or "No department"
                         )
 
-                    # -----------------------------------------------------
+                    # -----------------------------------------
                     # View
-                    # -----------------------------------------------------
+                    # -----------------------------------------
 
                     with col4:
-
-                        if st.button(
-                            "View",
-                            key=(
-                                f"view_booking_"
-                                f"{booking['booking_group_id']}"
-                            ),
-                            width="stretch",
+                        with st.container(
+                            key="booking_view"
                         ):
+                            if st.button(
+                                "View",
+                                key=(
+                                    f"view_booking_"
+                                    f"{booking['booking_group_id']}"
+                                ),
+                                width="stretch",
+                            ):
+                                st.session_state[
+                                    "selected_booking_group_id"
+                                ] = booking[
+                                    "booking_group_id"
+                                ]
 
-                            st.session_state[
-                                "selected_booking_group_id"
-                            ] = booking[
-                                "booking_group_id"
-                            ]
+                                # st.session_state.pop(
+                                #     "show_cancel_booking",
+                                #     None,
+                                # )
 
-                            st.rerun()
+                                st.rerun()
 
-                    # -----------------------------------------------------
-                    # Print / Download PDF
-                    # -----------------------------------------------------
+                    # -----------------------------------------
+                    # Print
+                    # -----------------------------------------
 
                     with col5:
 
@@ -224,23 +268,27 @@ def render_sample_booking_management(hero):
                                     )
                                 )
 
-                                st.download_button(
-                                    "Print PDF",
-                                    data=pdf_bytes,
-                                    file_name=(
-                                        f"{booking['booking_number']}_"
-                                        f"Booking_Confirmation.pdf"
-                                    ),
-                                    mime="application/pdf",
-                                    key=(
-                                        f"print_booking_row_"
-                                        f"{booking['booking_group_id']}"
-                                    ),
-                                    width="stretch",
-                                )
+                                with st.container(
+                                    key="booking_print"
+                                ):
+
+                                    st.download_button(
+                                        "Print PDF",
+                                        data=pdf_bytes,
+                                        file_name=(
+                                            f"{booking['booking_number']}_"
+                                            f"Booking_Confirmation.pdf"
+                                        ),
+                                        mime="application/pdf",
+                                        type="primary",
+                                        key=(
+                                            f"print_booking_row_"
+                                            f"{booking['booking_group_id']}"
+                                        ),
+                                        width="stretch",
+                                    )
 
                         except Exception as exc:
-
                             st.button(
                                 "Print PDF",
                                 disabled=True,
@@ -248,9 +296,7 @@ def render_sample_booking_management(hero):
                                     f"print_booking_error_"
                                     f"{booking['booking_group_id']}"
                                 ),
-                                help=(
-                                    f"Could not generate PDF: {exc}"
-                                ),
+                                help=str(exc),
                                 width="stretch",
                             )
 
@@ -303,6 +349,11 @@ def render_sample_booking_management(hero):
                     ):
                         st.session_state.pop(
                             "selected_booking_group_id",
+                            None,
+                        )
+
+                        st.session_state.pop(
+                            "show_cancel_booking",
                             None,
                         )
 
@@ -408,164 +459,202 @@ def render_sample_booking_management(hero):
 
                 st.markdown("---")
 
-                pdf_bytes = generate_booking_confirmation_pdf(
-                    booking,
-                    samples,
+                # -------------------------------------------------
+                # Booking Actions
+                # -------------------------------------------------
+
+                booking_status = str(
+                    booking["booking_status"]
+                ).strip()
+
+                is_reserved = (
+                    booking_status.lower()
+                    == "reserved"
                 )
 
-                st.download_button(
-                    "Print / Download Booking Confirmation",
-                    data=pdf_bytes,
-                    file_name=(
-                        f"{booking['booking_number']}_"
-                        f"Booking_Confirmation.pdf"
-                    ),
-                    mime="application/pdf",
-                    type="primary",
-                    width="stretch",
+                # -------------------------------------------------
+                # Cancel Booking
+                # -------------------------------------------------
+
+                if booking["booking_status"] == "Reserved":
+
+                    with st.container(
+                        key=(
+                            f"booking_cancel_"
+                            f"{booking['booking_group_id']}"
+                        )
+                    ):
+
+                        cancel_clicked = st.button(
+                            "Cancel Booking",
+                            key=(
+                                f"open_cancel_booking_"
+                                f"{booking['booking_group_id']}"
+                            ),
+                            width="stretch",
+                        )
+
+                    if cancel_clicked:
+                        st.session_state[
+                            "cancel_booking_group_id"
+                        ] = str(
+                            booking["booking_group_id"]
+                        )
+
+
+                # -------------------------------------------------
+                # Print Booking
+                # -------------------------------------------------
+
+                with st.container(
                     key=(
-                        f"download_booking_"
+                        f"booking_print_"
                         f"{booking['booking_group_id']}"
-                    ),
-                )
+                    )
+                ):
 
-    # ---------------------------------------------------------
-    # Cancellation Form
-    # ---------------------------------------------------------
-
-    cancel_booking_id = st.session_state.get(
-        "cancel_booking_id"
-    )
-
-    if cancel_booking_id:
-        selected_booking = next(
-            (
-                booking
-                for booking in upcoming_bookings
-                if booking["id"]
-                == cancel_booking_id
-            ),
-            None,
-        )
-
-        if selected_booking:
-            st.divider()
-
-            st.subheader("Cancel Booking")
-
-            st.write(
-                selected_booking["sample_name"]
-            )
-
-            st.caption(
-                selected_booking["sample_id"]
-            )
-
-            with st.form(
-                "cancel_booking_form"
-            ):
-                cancelled_by = st.text_input(
-                    "Cancelled By *"
-                )
-
-                cancellation_reason = st.selectbox(
-                    "Reason *",
-                    [
-                        "Please Select a Reason",
-                        "Plan changed",
-                        "Event cancelled",
-                        "Different sample selected",
-                        "No longer required",
-                        "Other",
-                    ],
-                )
-
-                other_reason = ""
-
-                if cancellation_reason == "Other":
-                    other_reason = st.text_area(
-                        "Other Reason *"
+                    pdf_bytes = generate_booking_confirmation_pdf(
+                        booking,
+                        samples,
                     )
 
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    confirm_cancel = st.form_submit_button(
-                        "Confirm Cancellation",
-                        type="primary",
+                    st.download_button(
+                        "Print / Download Confirmation",
+                        data=pdf_bytes,
+                        file_name=(
+                            f"{booking['booking_number']}_"
+                            f"Booking_Confirmation.pdf"
+                        ),
+                        mime="application/pdf",
+                        key=(
+                            f"download_booking_"
+                            f"{booking['booking_group_id']}"
+                        ),
                         width="stretch",
                     )
 
-                with col2:
-                    close_cancel = st.form_submit_button(
-                        "Keep Booking",
-                        width="stretch",
+
+                cancel_booking_group_id = (
+                    st.session_state.get(
+                        "cancel_booking_group_id"
+                    )
+                )
+
+                current_booking_group_id = str(
+                    booking["booking_group_id"]
+                )
+
+                if (
+                    booking["booking_status"] == "Reserved"
+                    and cancel_booking_group_id
+                    == current_booking_group_id
+                ):
+
+                    st.markdown("### Cancel Booking")
+
+                    st.warning(
+                        (
+                            f"Cancel {booking['booking_number']}? "
+                            f"This will release all "
+                            f"{len(samples)} samples."
+                        )
                     )
 
-                if close_cancel:
-                    st.session_state.pop(
-                        "cancel_booking_id",
-                        None,
-                    )
-                    st.rerun()
-
-                if confirm_cancel:
-                    if not cancelled_by.strip():
-                        st.error(
-                            "Please enter who is cancelling "
-                            "the booking."
+                    with st.form(
+                        (
+                            f"cancel_booking_group_form_"
+                            f"{booking['booking_group_id']}"
                         )
-
-                    elif (
-                        cancellation_reason
-                        == "Please Select a Reason"
                     ):
-                        st.error(
-                            "Please select a cancellation reason."
+
+                        cancelled_by = st.text_input(
+                            "Cancelled By *"
                         )
 
-                    elif (
-                        cancellation_reason == "Other"
-                        and not other_reason.strip()
-                    ):
-                        st.error(
-                            "Please enter the cancellation reason."
+                        cancellation_reason = st.selectbox(
+                            "Reason *",
+                            [
+                                "Plan changed",
+                                "Event cancelled",
+                                "Different samples selected",
+                                "No longer required",
+                                "Other",
+                            ],
                         )
 
-                    else:
+                        other_reason = ""
+
+                        if cancellation_reason == "Other":
+                            other_reason = st.text_area(
+                                "Other reason *"
+                            )
+
+                        confirm_cancel = (
+                            st.form_submit_button(
+                                "Confirm Cancellation",
+                                type="primary",
+                                width="stretch",
+                            )
+                        )
+
+                    if confirm_cancel:
+
                         final_reason = (
                             other_reason.strip()
                             if cancellation_reason == "Other"
                             else cancellation_reason
                         )
 
-                        try:
-                            cancel_booking(
-                                booking_id=cancel_booking_id,
-                                cancelled_by=cancelled_by.strip(),
-                                reason=final_reason,
-                            )
-
-                            st.session_state.pop(
-                                "cancel_booking_id",
-                                None,
-                            )
-
-                            st.session_state[
-                                "booking_management_flash"
-                            ] = {
-                                "type": "success",
-                                "message": (
-                                    "Booking cancelled successfully."
-                                ),
-                            }
-
-                            st.rerun()
-
-                        except Exception as exc:
+                        if not cancelled_by.strip():
                             st.error(
-                                f"Could not cancel booking: {exc}"
+                                "Cancelled By is required."
                             )
+
+                        elif not final_reason:
+                            st.error(
+                                "Cancellation reason is required."
+                            )
+
+                        else:
+
+                            try:
+                                booking_number = (
+                                    cancel_booking_group(
+                                        booking_group_id=booking[
+                                            "booking_group_id"
+                                        ],
+                                        cancelled_by=cancelled_by,
+                                        reason=final_reason,
+                                    )
+                                )
+
+                                st.session_state.pop(
+                                    "cancel_booking_group_id",
+                                    None,
+                                )
+
+                                st.session_state.pop(
+                                    "selected_booking_group_id",
+                                    None,
+                                )
+
+                                st.session_state[
+                                    "booking_management_flash"
+                                ] = {
+                                    "type": "success",
+                                    "message": (
+                                        f"{booking_number} "
+                                        "cancelled successfully."
+                                    ),
+                                }
+
+                                st.rerun()
+
+                            except Exception as exc:
+                                st.error(
+                                    f"Could not cancel booking: {exc}"
+                                )
+
 
     # ---------------------------------------------------------
     # Sample Requests

@@ -954,63 +954,6 @@ def get_bookings():
             return cur.fetchall()
 
 
-def cancel_booking(
-    *,
-    booking_id,
-    cancelled_by,
-    reason,
-):
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-
-            cur.execute(
-                """
-                UPDATE sample_bookings
-                SET
-                    booking_status = 'Cancelled',
-                    updated_at = NOW()
-                WHERE id = %s
-                  AND booking_status = 'Reserved'
-                RETURNING
-                    id,
-                    sample_record_id;
-                """,
-                (booking_id,),
-            )
-
-            booking = cur.fetchone()
-
-            if booking is None:
-                raise ValueError(
-                    "Booking could not be cancelled."
-                )
-
-            cur.execute(
-                """
-                INSERT INTO sample_events (
-                    sample_record_id,
-                    event_type,
-                    title,
-                    details
-                )
-                VALUES (
-                    %s,
-                    'BOOKING_CANCELLED',
-                    'Booking Cancelled',
-                    %s
-                );
-                """,
-                (
-                    booking["sample_record_id"],
-                    (
-                        f"Cancelled by {cancelled_by}. "
-                        f"Reason: {reason}"
-                    ),
-                ),
-            )
-
-            return booking
-
 def create_sample_request(
     *,
     product_code,
@@ -1537,6 +1480,7 @@ def create_sample_bookings(
 def get_booking_groups(
     *,
     status=None,
+    upcoming_only=False,
 ):
     query = """
         SELECT
@@ -1560,12 +1504,22 @@ def get_booking_groups(
     """
 
     params = []
+    conditions = []
 
     if status:
-        query += """
-            WHERE sbg.booking_status = %s
-        """
+        conditions.append(
+            "sbg.booking_status = %s"
+        )
         params.append(status)
+
+    if upcoming_only:
+        conditions.append(
+            "sbg.end_date >= CURRENT_DATE"
+        )
+
+    if conditions:
+        query += "\nWHERE "
+        query += " AND ".join(conditions)
 
     query += """
         GROUP BY
@@ -1670,3 +1624,136 @@ def get_booking_group_details(
                 "booking": booking,
                 "samples": samples,
             }
+
+def cancel_booking_group(
+    *,
+    booking_group_id,
+    cancelled_by,
+    reason,
+):
+    if not cancelled_by.strip():
+        raise ValueError(
+            "Cancelled By is required."
+        )
+
+    if not reason.strip():
+        raise ValueError(
+            "Cancellation reason is required."
+        )
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    booking_number,
+                    booking_status
+
+                FROM sample_booking_groups
+
+                WHERE id = %s
+
+                FOR UPDATE;
+                """,
+                (booking_group_id,),
+            )
+
+            booking = cur.fetchone()
+
+            if not booking:
+                raise ValueError(
+                    "Booking could not be found."
+                )
+
+            if booking["booking_status"] != "Reserved":
+                raise ValueError(
+                    (
+                        f"{booking['booking_number']} "
+                        "is no longer an active booking."
+                    )
+                )
+
+            cur.execute(
+                """
+                SELECT
+                    sb.sample_record_id,
+                    sm.sample_id,
+                    sm.sample_name
+
+                FROM sample_bookings sb
+
+                JOIN sample_master sm
+                    ON sm.id = sb.sample_record_id
+
+                WHERE sb.booking_group_id = %s
+                  AND sb.booking_status = 'Reserved';
+                """,
+                (booking_group_id,),
+            )
+
+            samples = cur.fetchall()
+
+            cur.execute(
+                """
+                UPDATE sample_booking_groups
+
+                SET
+                    booking_status = 'Cancelled',
+                    cancelled_by = %s,
+                    cancelled_at = NOW(),
+                    cancellation_reason = %s,
+                    updated_at = NOW()
+
+                WHERE id = %s;
+                """,
+                (
+                    cancelled_by.strip(),
+                    reason.strip(),
+                    booking_group_id,
+                ),
+            )
+
+            cur.execute(
+                """
+                UPDATE sample_bookings
+
+                SET booking_status = 'Cancelled'
+
+                WHERE booking_group_id = %s
+                  AND booking_status = 'Reserved';
+                """,
+                (booking_group_id,),
+            )
+
+            for sample in samples:
+                cur.execute(
+                    """
+                    INSERT INTO sample_events (
+                        sample_record_id,
+                        event_type,
+                        title,
+                        details
+                    )
+                    VALUES (
+                        %s,
+                        'BOOKING_CANCELLED',
+                        'Booking Cancelled',
+                        %s
+                    );
+                    """,
+                    (
+                        sample["sample_record_id"],
+                        (
+                            f"{booking['booking_number']} "
+                            f"cancelled by "
+                            f"{cancelled_by.strip()}. "
+                            f"Reason: {reason.strip()}."
+                        ),
+                    ),
+                )
+
+        conn.commit()
+
+    return booking["booking_number"]
