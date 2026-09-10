@@ -357,45 +357,36 @@ def render_sample_booking(hero):
                 ]
 
                 try:
-                    created_bookings = create_sample_bookings(
+                    booking_result = create_sample_bookings(
                         sample_record_ids=sample_record_ids,
-                        booked_by=booking_search[
-                            "booked_by"
-                        ],
-                        team=booking_search[
-                            "team"
-                        ],
-                        purpose=booking_search[
-                            "purpose"
-                        ],
-                        start_date=booking_search[
-                            "start_date"
-                        ],
-                        end_date=booking_search[
-                            "end_date"
-                        ],
-                        notes=booking_search[
-                            "notes"
-                        ],
+                        booked_by=booking_search["booked_by"],
+                        team=booking_search["team"],
+                        purpose=booking_search["purpose"],
+                        start_date=booking_search["start_date"],
+                        end_date=booking_search["end_date"],
+                        notes=booking_search["notes"],
                     )
 
                     booking_count = len(
-                        created_bookings
+                        booking_result["bookings"]
                     )
+
+                    booking_number = booking_result[
+                        "booking_number"
+                    ]
 
                     st.session_state[
                         "booking_flash"
                     ] = {
                         "type": "success",
                         "message": (
-                            f"{booking_count} "
+                            f"{booking_number} created successfully "
+                            f"with {booking_count} "
                             f"sample"
-                            f"{'s' if booking_count != 1 else ''} "
-                            f"booked successfully."
+                            f"{'s' if booking_count != 1 else ''}."
                         ),
                     }
 
-                    # Clear completed workflow
                     st.session_state[
                         "booking_cart"
                     ] = []

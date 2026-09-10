@@ -5,11 +5,15 @@ import streamlit as st
 from repositories.sample_repository import (
     approve_sample_request,
     cancel_booking,
-    get_bookings,
+    get_booking_group_details,
+    get_booking_groups,
     get_sample_requests,
     reject_sample_request,
 )
 
+from utils.booking_confirmation import (
+    generate_booking_confirmation_pdf,
+)
 
 def render_sample_booking_management(hero):
     hero(
@@ -32,7 +36,6 @@ def render_sample_booking_management(hero):
             st.error(flash["message"])
 
     try:
-        bookings = get_bookings()
         sample_requests = get_sample_requests()
 
     except Exception as exc:
@@ -43,19 +46,31 @@ def render_sample_booking_management(hero):
 
     today = date.today()
 
-    upcoming_bookings = [
+    try:
+        booking_history = get_booking_groups()
+
+    except Exception as exc:
+        st.error(
+            f"Could not load booking history: {exc}"
+        )
+        booking_history = []
+
+
+    upcoming_bookings = get_booking_groups(
+        status="Reserved",
+    )
+
+    historical_bookings = [
         booking
-        for booking in bookings
-        if booking["end_date"] >= today
-        and booking["booking_status"] == "Reserved"
+        for booking in booking_history
+        if booking["booking_status"]
+        in (
+            "Cancelled",
+            "Completed",
+        )
     ]
 
-    booking_history = [
-        booking
-        for booking in bookings
-        if booking["booking_status"] != "Reserved"
-        or booking["end_date"] < today
-    ]
+    booking_history = get_booking_groups()
 
     pending_requests = [
         request
@@ -76,81 +91,343 @@ def render_sample_booking_management(hero):
     # ---------------------------------------------------------
 
     with tabs[0]:
-        if not upcoming_bookings:
-            st.info("No upcoming bookings.")
 
-        for booking in upcoming_bookings:
-            with st.container(border=True):
-                col1, col2, col3, col4 = st.columns(
-                    [2.5, 1.5, 1.5, 1]
+        try:
+            upcoming_bookings = get_booking_groups(
+                status="Reserved",
+            )
+        except Exception as exc:
+            st.error(
+                f"Could not load upcoming bookings: {exc}"
+            )
+            upcoming_bookings = []
+
+        st.subheader(
+            f"Upcoming Bookings "
+            f"({len(upcoming_bookings)})"
+        )
+
+        if not upcoming_bookings:
+            st.info(
+                "There are no upcoming bookings."
+            )
+
+        else:
+            for booking in upcoming_bookings:
+
+                with st.container(border=True):
+
+                    col1, col2, col3, col4, col5 = st.columns(
+                        [1.4, 2.4, 1.7, 0.8, 1.2]
+                    )
+
+                    # -----------------------------------------------------
+                    # Booking number / requester
+                    # -----------------------------------------------------
+
+                    with col1:
+
+                        st.write(
+                            f"**{booking['booking_number']}**"
+                        )
+
+                        st.caption(
+                            booking["booked_by"]
+                        )
+
+                    # -----------------------------------------------------
+                    # Dates / purpose
+                    # -----------------------------------------------------
+
+                    with col2:
+
+                        st.write(
+                            (
+                                f"{booking['start_date']:%d %b %Y}"
+                                f" → "
+                                f"{booking['end_date']:%d %b %Y}"
+                            )
+                        )
+
+                        st.caption(
+                            booking["purpose"]
+                            or "No purpose"
+                        )
+
+                    # -----------------------------------------------------
+                    # Sample count / department
+                    # -----------------------------------------------------
+
+                    with col3:
+
+                        sample_count = booking[
+                            "sample_count"
+                        ]
+
+                        st.write(
+                            (
+                                f"**{sample_count} "
+                                f"sample"
+                                f"{'s' if sample_count != 1 else ''}**"
+                            )
+                        )
+
+                        st.caption(
+                            booking["team"]
+                            or "No department"
+                        )
+
+                    # -----------------------------------------------------
+                    # View
+                    # -----------------------------------------------------
+
+                    with col4:
+
+                        if st.button(
+                            "View",
+                            key=(
+                                f"view_booking_"
+                                f"{booking['booking_group_id']}"
+                            ),
+                            width="stretch",
+                        ):
+
+                            st.session_state[
+                                "selected_booking_group_id"
+                            ] = booking[
+                                "booking_group_id"
+                            ]
+
+                            st.rerun()
+
+                    # -----------------------------------------------------
+                    # Print / Download PDF
+                    # -----------------------------------------------------
+
+                    with col5:
+
+                        try:
+                            print_details = (
+                                get_booking_group_details(
+                                    booking[
+                                        "booking_group_id"
+                                    ]
+                                )
+                            )
+
+                            if print_details:
+
+                                pdf_bytes = (
+                                    generate_booking_confirmation_pdf(
+                                        print_details["booking"],
+                                        print_details["samples"],
+                                    )
+                                )
+
+                                st.download_button(
+                                    "Print PDF",
+                                    data=pdf_bytes,
+                                    file_name=(
+                                        f"{booking['booking_number']}_"
+                                        f"Booking_Confirmation.pdf"
+                                    ),
+                                    mime="application/pdf",
+                                    key=(
+                                        f"print_booking_row_"
+                                        f"{booking['booking_group_id']}"
+                                    ),
+                                    width="stretch",
+                                )
+
+                        except Exception as exc:
+
+                            st.button(
+                                "Print PDF",
+                                disabled=True,
+                                key=(
+                                    f"print_booking_error_"
+                                    f"{booking['booking_group_id']}"
+                                ),
+                                help=(
+                                    f"Could not generate PDF: {exc}"
+                                ),
+                                width="stretch",
+                            )
+
+        selected_booking_group_id = (
+            st.session_state.get(
+                "selected_booking_group_id"
+            )
+        )
+
+        if selected_booking_group_id:
+
+            st.divider()
+
+            try:
+                booking_details = (
+                    get_booking_group_details(
+                        selected_booking_group_id
+                    )
+                )
+            except Exception as exc:
+                st.error(
+                    f"Could not load booking details: {exc}"
+                )
+                booking_details = None
+
+            if booking_details:
+
+                booking = booking_details[
+                    "booking"
+                ]
+
+                samples = booking_details[
+                    "samples"
+                ]
+
+                col1, col2 = st.columns(
+                    [4, 1]
                 )
 
                 with col1:
-                    display_name = booking["sample_name"]
-
-                    if booking["location_code"]:
-                        display_name += (
-                            f" ({booking['location_code']})"
-                        )
-
-                    st.markdown(
-                        f"### {display_name}"
-                    )
-
-                    st.caption(
-                        booking["sample_id"]
+                    st.subheader(
+                        booking["booking_number"]
                     )
 
                 with col2:
-                    st.caption("Booking Dates")
-
-                    st.write(
-                        booking["start_date"].strftime(
-                            "%d %b %Y"
+                    if st.button(
+                        "Close",
+                        key="close_booking_details",
+                        width="stretch",
+                    ):
+                        st.session_state.pop(
+                            "selected_booking_group_id",
+                            None,
                         )
-                    )
 
-                    st.write(
-                        f"to "
-                        f"{booking['end_date'].strftime('%d %b %Y')}"
-                    )
+                        st.rerun()
 
-                with col3:
+                info1, info2, info3 = st.columns(3)
+
+                with info1:
                     st.caption("Requested By")
-
                     st.write(
                         booking["booked_by"]
                     )
 
-                    if booking["team"]:
-                        st.caption(
-                            booking["team"]
-                        )
+                    st.caption("Department")
+                    st.write(
+                        booking["team"]
+                        or "—"
+                    )
 
+                with info2:
+                    st.caption("Required From")
+                    st.write(
+                        booking[
+                            "start_date"
+                        ].strftime(
+                            "%d %b %Y"
+                        )
+                    )
+
+                    st.caption("Required Until")
+                    st.write(
+                        booking[
+                            "end_date"
+                        ].strftime(
+                            "%d %b %Y"
+                        )
+                    )
+
+                with info3:
+                    st.caption("Purpose")
                     st.write(
                         booking["purpose"]
                         or "—"
                     )
 
-                with col4:
                     st.caption("Status")
                     st.write(
-                        booking["booking_status"]
+                        booking[
+                            "booking_status"
+                        ]
                     )
 
-                    if st.button(
-                        "Cancel",
-                        key=(
-                            f"cancel_booking_"
-                            f"{booking['id']}"
-                        ),
-                        width="stretch",
-                    ):
-                        st.session_state[
-                            "cancel_booking_id"
-                        ] = booking["id"]
+                if booking["notes"]:
+                    st.caption("Notes")
+                    st.write(
+                        booking["notes"]
+                    )
 
-                        st.rerun()
+                st.markdown(
+                    f"### Samples ({len(samples)})"
+                )
+
+                for sample in samples:
+
+                    with st.container(
+                        border=True
+                    ):
+
+                        col1, col2 = (
+                            st.columns(
+                                [3, 2]
+                            )
+                        )
+
+                        with col1:
+
+                            st.write(
+                                f"**{sample['sample_name']}**"
+                            )
+
+                            st.caption(
+                                (
+                                    f"{sample['sample_id']} · "
+                                    f"{sample['sample_type_name']}"
+                                )
+                            )
+
+                        with col2:
+
+                            if sample[
+                                "location_name"
+                            ]:
+                                st.write(
+                                    (
+                                        f"{sample['location_code']} · "
+                                        f"{sample['location_name']}"
+                                    )
+                                )
+                            else:
+                                st.write(
+                                    "Location not assigned"
+                                )
+
+                st.markdown("---")
+
+                pdf_bytes = generate_booking_confirmation_pdf(
+                    booking,
+                    samples,
+                )
+
+                st.download_button(
+                    "Print / Download Booking Confirmation",
+                    data=pdf_bytes,
+                    file_name=(
+                        f"{booking['booking_number']}_"
+                        f"Booking_Confirmation.pdf"
+                    ),
+                    mime="application/pdf",
+                    type="primary",
+                    width="stretch",
+                    key=(
+                        f"download_booking_"
+                        f"{booking['booking_group_id']}"
+                    ),
+                )
 
     # ---------------------------------------------------------
     # Cancellation Form
@@ -641,32 +918,76 @@ def render_sample_booking_management(hero):
     # ---------------------------------------------------------
 
     with tabs[2]:
-        if not booking_history:
+
+        try:
+            booking_history = get_booking_groups()
+
+        except Exception as exc:
+            st.error(
+                f"Could not load booking history: {exc}"
+            )
+            booking_history = []
+
+        historical_bookings = [
+            booking
+            for booking in booking_history
+            if booking["booking_status"]
+            in (
+                "Cancelled",
+                "Completed",
+            )
+        ]
+
+        st.subheader(
+            f"Booking History "
+            f"({len(historical_bookings)})"
+        )
+
+        if not historical_bookings:
             st.info(
-                "No booking history yet."
+                "No completed or cancelled bookings."
             )
 
-        for booking in reversed(
-            booking_history
-        ):
-            with st.container(border=True):
-                st.write(
-                    f"**{booking['sample_name']}**"
-                )
+        else:
+            for booking in historical_bookings:
 
-                st.caption(
-                    booking["sample_id"]
-                )
+                with st.container(border=True):
 
-                st.write(
-                    (
-                        f"{booking['start_date'].strftime('%d %b %Y')}"
-                        f" – "
-                        f"{booking['end_date'].strftime('%d %b %Y')}"
+                    col1, col2, col3 = st.columns(
+                        [2, 3, 2]
                     )
-                )
 
-                st.write(
-                    f"Status: "
-                    f"**{booking['booking_status']}**"
-                )
+                    with col1:
+                        st.write(
+                            f"**{booking['booking_number']}**"
+                        )
+
+                        st.caption(
+                            booking["booking_status"]
+                        )
+
+                    with col2:
+                        st.write(
+                            (
+                                f"{booking['start_date']:%d %b %Y}"
+                                f" → "
+                                f"{booking['end_date']:%d %b %Y}"
+                            )
+                        )
+
+                        st.caption(
+                            booking["booked_by"]
+                        )
+
+                    with col3:
+                        sample_count = booking[
+                            "sample_count"
+                        ]
+
+                        st.write(
+                            (
+                                f"{sample_count} "
+                                f"sample"
+                                f"{'s' if sample_count != 1 else ''}"
+                            )
+                        )

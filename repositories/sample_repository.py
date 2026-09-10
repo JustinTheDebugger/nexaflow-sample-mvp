@@ -1286,7 +1286,7 @@ def create_sample_bookings(
         with conn.cursor() as cur:
 
             # -------------------------------------------------
-            # Lock all selected physical sample records
+            # Lock selected physical samples
             # -------------------------------------------------
 
             cur.execute(
@@ -1319,10 +1319,11 @@ def create_sample_bookings(
                 )
 
             # -------------------------------------------------
-            # Validate sample state
+            # Validate physical samples
             # -------------------------------------------------
 
             for sample in samples:
+
                 if sample["asset_state"] != "Active":
                     raise ValueError(
                         (
@@ -1342,7 +1343,7 @@ def create_sample_bookings(
                     )
 
             # -------------------------------------------------
-            # Recheck date availability inside transaction
+            # Final availability check
             # -------------------------------------------------
 
             cur.execute(
@@ -1363,7 +1364,6 @@ def create_sample_bookings(
                   AND sb.booking_status = 'Reserved'
 
                   AND sb.start_date <= %s
-
                   AND sb.end_date >= %s;
                 """,
                 (
@@ -1376,6 +1376,7 @@ def create_sample_bookings(
             conflicts = cur.fetchall()
 
             if conflicts:
+
                 conflict_names = ", ".join(
                     (
                         f"{row['sample_name']} "
@@ -1392,13 +1393,60 @@ def create_sample_bookings(
                 )
 
             # -------------------------------------------------
-            # Create bookings
+            # Create ONE booking header
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                INSERT INTO sample_booking_groups (
+                    booked_by,
+                    team,
+                    purpose,
+                    start_date,
+                    end_date,
+                    notes,
+                    booking_status
+                )
+                VALUES (
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    'Reserved'
+                )
+                RETURNING
+                    id,
+                    booking_number;
+                """,
+                (
+                    booked_by,
+                    team,
+                    purpose,
+                    start_date,
+                    end_date,
+                    notes,
+                ),
+            )
+
+            booking_group = cur.fetchone()
+
+            booking_group_id = booking_group["id"]
+            booking_number = booking_group[
+                "booking_number"
+            ]
+
+            # -------------------------------------------------
+            # Create individual sample booking items
             # -------------------------------------------------
 
             for sample in samples:
+
                 cur.execute(
                     """
                     INSERT INTO sample_bookings (
+                        booking_group_id,
                         sample_record_id,
                         booked_by,
                         team,
@@ -1416,16 +1464,19 @@ def create_sample_bookings(
                         %s,
                         %s,
                         %s,
+                        %s,
                         'Reserved',
                         FALSE,
                         %s
                     )
                     RETURNING
                         id,
+                        booking_group_id,
                         sample_record_id,
                         booking_status;
                     """,
                     (
+                        booking_group_id,
                         sample["id"],
                         booked_by,
                         team,
@@ -1436,10 +1487,10 @@ def create_sample_bookings(
                     ),
                 )
 
-                booking = cur.fetchone()
+                created_booking = cur.fetchone()
 
                 created_bookings.append(
-                    booking
+                    created_booking
                 )
 
                 # ---------------------------------------------
@@ -1464,9 +1515,12 @@ def create_sample_bookings(
                     (
                         sample["id"],
                         (
+                            f"{booking_number}. "
                             f"Booked by {booked_by} "
-                            f"from {start_date:%d %b %Y} "
-                            f"to {end_date:%d %b %Y}. "
+                            f"from "
+                            f"{start_date:%d %b %Y} "
+                            f"to "
+                            f"{end_date:%d %b %Y}. "
                             f"Purpose: {purpose}."
                         ),
                     ),
@@ -1474,4 +1528,145 @@ def create_sample_bookings(
 
         conn.commit()
 
-    return created_bookings
+    return {
+        "booking_group_id": booking_group_id,
+        "booking_number": booking_number,
+        "bookings": created_bookings,
+    }
+
+def get_booking_groups(
+    *,
+    status=None,
+):
+    query = """
+        SELECT
+            sbg.id AS booking_group_id,
+            sbg.booking_number,
+            sbg.booked_by,
+            sbg.team,
+            sbg.purpose,
+            sbg.start_date,
+            sbg.end_date,
+            sbg.notes,
+            sbg.booking_status,
+            sbg.created_at,
+
+            COUNT(sb.id) AS sample_count
+
+        FROM sample_booking_groups sbg
+
+        LEFT JOIN sample_bookings sb
+            ON sb.booking_group_id = sbg.id
+    """
+
+    params = []
+
+    if status:
+        query += """
+            WHERE sbg.booking_status = %s
+        """
+        params.append(status)
+
+    query += """
+        GROUP BY
+            sbg.id,
+            sbg.booking_number,
+            sbg.booked_by,
+            sbg.team,
+            sbg.purpose,
+            sbg.start_date,
+            sbg.end_date,
+            sbg.notes,
+            sbg.booking_status,
+            sbg.created_at
+
+        ORDER BY
+            sbg.start_date,
+            sbg.booking_number;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                params,
+            )
+
+            return cur.fetchall()
+
+
+def get_booking_group_details(
+    booking_group_id,
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                SELECT
+                    sbg.id AS booking_group_id,
+                    sbg.booking_number,
+                    sbg.booked_by,
+                    sbg.team,
+                    sbg.purpose,
+                    sbg.start_date,
+                    sbg.end_date,
+                    sbg.notes,
+                    sbg.booking_status,
+                    sbg.created_at
+
+                FROM sample_booking_groups sbg
+
+                WHERE sbg.id = %s;
+                """,
+                (booking_group_id,),
+            )
+
+            booking = cur.fetchone()
+
+            if not booking:
+                return None
+
+            cur.execute(
+                """
+                SELECT
+                    sb.id AS booking_item_id,
+                    sb.sample_record_id,
+                    sb.booking_status,
+
+                    sm.sample_id,
+                    sm.sample_name,
+
+                    st.code AS sample_type_code,
+                    st.name AS sample_type_name,
+
+                    sl.code AS location_code,
+                    sl.name AS location_name
+
+                FROM sample_bookings sb
+
+                JOIN sample_master sm
+                    ON sm.id = sb.sample_record_id
+
+                JOIN sample_types st
+                    ON st.id = sm.sample_type_id
+
+                LEFT JOIN sample_locations sl
+                    ON sl.id = sm.current_location_id
+
+                WHERE sb.booking_group_id = %s
+
+                ORDER BY
+                    sl.code,
+                    sm.sample_name,
+                    sm.sample_id;
+                """,
+                (booking_group_id,),
+            )
+
+            samples = cur.fetchall()
+
+            return {
+                "booking": booking,
+                "samples": samples,
+            }
