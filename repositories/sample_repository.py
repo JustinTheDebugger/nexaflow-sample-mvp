@@ -1157,7 +1157,7 @@ def search_available_samples(
             ON sp.sample_record_id = sm.id
 
         WHERE sm.asset_state = 'Active'
-
+          AND sm.condition = 'Good'
           AND st.is_bookable = TRUE
 
           AND (
@@ -1555,23 +1555,27 @@ def get_booking_group_details(
     with get_connection() as conn:
         with conn.cursor() as cur:
 
+            # -----------------------------------------
+            # Booking header
+            # -----------------------------------------
+
             cur.execute(
                 """
                 SELECT
-                    sbg.id AS booking_group_id,
-                    sbg.booking_number,
-                    sbg.booked_by,
-                    sbg.team,
-                    sbg.purpose,
-                    sbg.start_date,
-                    sbg.end_date,
-                    sbg.notes,
-                    sbg.booking_status,
-                    sbg.created_at
+                    id AS booking_group_id,
+                    booking_number,
+                    booked_by,
+                    team,
+                    purpose,
+                    start_date,
+                    end_date,
+                    notes,
+                    booking_status,
+                    created_at
 
-                FROM sample_booking_groups sbg
+                FROM sample_booking_groups
 
-                WHERE sbg.id = %s;
+                WHERE id = %s;
                 """,
                 (booking_group_id,),
             )
@@ -1580,6 +1584,10 @@ def get_booking_group_details(
 
             if not booking:
                 return None
+
+            # -----------------------------------------
+            # Physical samples
+            # -----------------------------------------
 
             cur.execute(
                 """
@@ -1611,7 +1619,6 @@ def get_booking_group_details(
                 WHERE sb.booking_group_id = %s
 
                 ORDER BY
-                    sl.code,
                     sm.sample_name,
                     sm.sample_id;
                 """,
@@ -1757,3 +1764,334 @@ def cancel_booking_group(
         conn.commit()
 
     return booking["booking_number"]
+
+
+# RETURN SAMPLE FUNCTIONS
+
+def get_booking_return_checks(
+    booking_group_id,
+):
+    query = """
+        SELECT
+            src.id,
+            src.booking_group_id,
+            src.booking_item_id,
+            src.sample_record_id,
+            src.return_status,
+            src.condition_on_return,
+            src.damage_reported,
+            src.damage_details,
+            src.incomplete_reported,
+            src.missing_details,
+            src.checked_by,
+            src.checked_at,
+            src.notes,
+            sm.sample_id,
+            sm.sample_name
+
+        FROM sample_return_checks src
+
+        JOIN sample_master sm
+            ON sm.id = src.sample_record_id
+
+        WHERE src.booking_group_id = %s
+
+        ORDER BY
+            sm.sample_name,
+            sm.sample_id;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                (booking_group_id,),
+            )
+            return cur.fetchall()
+
+def save_sample_return_check(
+    *,
+    booking_group_id,
+    booking_item_id,
+    sample_record_id,
+    return_status,
+    checked_by,
+    condition_on_return=None,
+    damage_details=None,
+    missing_details=None,
+    notes=None,
+):
+
+    allowed_statuses = {
+        "Good",
+        "Damaged",
+        "Incomplete",
+        "Missing",
+    }
+
+    if return_status not in allowed_statuses:
+        raise ValueError(
+            "Invalid return status."
+        )
+
+    if not checked_by or not checked_by.strip():
+        raise ValueError(
+            "Checked By is required."
+        )
+
+    checked_by = checked_by.strip()
+
+    clean_notes = (
+        notes.strip()
+        if notes and notes.strip()
+        else None
+    )
+
+    damage_reported = (
+        return_status == "Damaged"
+    )
+
+    incomplete_reported = (
+        return_status == "Incomplete"
+    )
+
+    with get_connection() as conn:
+
+        with conn.cursor() as cur:
+
+            # -------------------------------------------------
+            # Validate booking item
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                SELECT
+                    sb.id,
+                    sb.booking_group_id,
+                    sb.sample_record_id,
+                    sb.booking_status
+                FROM sample_bookings sb
+                WHERE sb.id = %s
+                  AND sb.booking_group_id = %s
+                  AND sb.sample_record_id = %s
+                FOR UPDATE;
+                """,
+                (
+                    booking_item_id,
+                    booking_group_id,
+                    sample_record_id,
+                ),
+            )
+
+            booking_item = cur.fetchone()
+
+            if not booking_item:
+                raise ValueError(
+                    "Booking item could not be found."
+                )
+
+            if (
+                booking_item["booking_status"]
+                != "Reserved"
+            ):
+                raise ValueError(
+                    "This booking item is not Reserved."
+                )
+
+            # -------------------------------------------------
+            # Save / update inspection
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                INSERT INTO sample_return_checks (
+                    booking_group_id,
+                    booking_item_id,
+                    sample_record_id,
+                    return_status,
+                    condition_on_return,
+                    damage_reported,
+                    damage_details,
+                    incomplete_reported,
+                    missing_details,
+                    checked_by,
+                    checked_at,
+                    notes
+                )
+                VALUES (
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    NOW(),
+                    %s
+                )
+                ON CONFLICT (booking_item_id)
+                DO UPDATE SET
+                    return_status =
+                        EXCLUDED.return_status,
+                    condition_on_return =
+                        EXCLUDED.condition_on_return,
+                    damage_reported =
+                        EXCLUDED.damage_reported,
+                    damage_details =
+                        EXCLUDED.damage_details,
+                    incomplete_reported =
+                        EXCLUDED.incomplete_reported,
+                    missing_details =
+                        EXCLUDED.missing_details,
+                    checked_by =
+                        EXCLUDED.checked_by,
+                    checked_at = NOW(),
+                    notes =
+                        EXCLUDED.notes,
+                    updated_at = NOW()
+                RETURNING id;
+                """,
+                (
+                    booking_group_id,
+                    booking_item_id,
+                    sample_record_id,
+                    return_status,
+                    condition_on_return,
+                    damage_reported,
+                    None,
+                    incomplete_reported,
+                    None,
+                    checked_by,
+                    clean_notes,
+                ),
+            )
+
+            return_check = cur.fetchone()
+
+            # -------------------------------------------------
+            # Determine return outcome
+            # -------------------------------------------------
+
+            if return_status == "Good":
+
+                event_type = "SAMPLE_RETURNED"
+                title = "Sample Returned"
+
+                details = (
+                    f"Return inspection completed by "
+                    f"{checked_by}. "
+                    f"Condition: Good."
+                )
+
+                new_condition = "Good"
+                new_asset_state = "Active"
+
+            elif return_status == "Damaged":
+
+                event_type = "DAMAGE_REPORTED"
+                title = "Damage Reported"
+
+                details = (
+                    f"Return inspection completed by "
+                    f"{checked_by}. "
+                    f"Condition: Damaged."
+                )
+
+                new_condition = "Damaged"
+                new_asset_state = "Damaged"
+
+            elif return_status == "Incomplete":
+
+                event_type = "INCOMPLETE_RETURN"
+                title = "Incomplete Return"
+
+                details = (
+                    f"Return inspection completed by "
+                    f"{checked_by}. "
+                    f"Condition: Incomplete."
+                )
+
+                new_condition = "Incomplete"
+                new_asset_state = "Inactive"
+
+            elif return_status == "Missing":
+
+                event_type = "SAMPLE_MISSING"
+                title = "Sample Missing"
+
+                details = (
+                    f"Sample reported missing during "
+                    f"return inspection by "
+                    f"{checked_by}."
+                )
+
+                new_condition = "Missing"
+                new_asset_state = "Lost"
+
+            # -------------------------------------------------
+            # Append optional notes
+            # -------------------------------------------------
+
+            if clean_notes:
+                details += (
+                    f" Notes: {clean_notes}"
+                )
+
+            # -------------------------------------------------
+            # Record sample event
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                INSERT INTO sample_events (
+                    sample_record_id,
+                    event_type,
+                    title,
+                    details
+                )
+                VALUES (
+                    %s,
+                    %s,
+                    %s,
+                    %s
+                );
+                """,
+                (
+                    sample_record_id,
+                    event_type,
+                    title,
+                    details,
+                ),
+            )
+
+            # -------------------------------------------------
+            # Update current sample condition/state
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                UPDATE sample_master
+                SET
+                    condition = %s,
+                    asset_state = %s,
+                    updated_at = NOW()
+                WHERE id = %s;
+                """,
+                (
+                    new_condition,
+                    new_asset_state,
+                    sample_record_id,
+                ),
+            )
+
+        conn.commit()
+
+    return {
+        "return_check_id": return_check["id"],
+        "return_status": return_status,
+        "condition": new_condition,
+        "asset_state": new_asset_state,
+    }

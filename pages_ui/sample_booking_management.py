@@ -7,8 +7,10 @@ from repositories.sample_repository import (
     cancel_booking_group,
     get_booking_group_details,
     get_booking_groups,
+    get_booking_return_checks,
     get_sample_requests,
     reject_sample_request,
+    save_sample_return_check,
 )
 
 from utils.booking_confirmation import (
@@ -27,31 +29,62 @@ def render_sample_booking_management(hero):
     st.markdown(
         """
         <style>
-        /* View button - blue */
-        .st-key-booking_view button {
+
+        /* -----------------------------------------
+        View button - blue
+        ----------------------------------------- */
+
+        div[class*="st-key-booking_view_"] button {
             background-color: #2563eb !important;
             color: white !important;
             border: 1px solid #2563eb !important;
         }
 
-        .st-key-booking_view button:hover {
+        div[class*="st-key-booking_view_"] button:hover {
             background-color: #1d4ed8 !important;
+            color: white !important;
             border-color: #1d4ed8 !important;
         }
 
-        /* Print button - white */
-        .st-key-booking_print button {
+
+        /* -----------------------------------------
+        Return Samples button - grey
+        ----------------------------------------- */
+
+        div[class*="st-key-booking_return_"] button {
+            background-color: #606060 !important;
+            color: white !important;
+            border: 1px solid #606060 !important;
+        }
+
+        div[class*="st-key-booking_return_"] button:hover {
+            background-color: #777777 !important;
+            color: white !important;
+            border-color: #777777 !important;
+        }
+
+
+        /* -----------------------------------------
+        Print PDF button - white
+        ----------------------------------------- */
+
+        div[class*="st-key-booking_row_print_"] button {
             background-color: white !important;
             color: #1f2937 !important;
             border: 1px solid #d1d5db !important;
         }
 
-        .st-key-booking_print button:hover {
+        div[class*="st-key-booking_row_print_"] button:hover {
             background-color: #f3f4f6 !important;
+            color: #1f2937 !important;
             border-color: #9ca3af !important;
         }
 
-        /* Cancel button - red */
+
+        /* -----------------------------------------
+        Cancel Booking button - red
+        ----------------------------------------- */
+
         div[class*="st-key-booking_cancel_"] button {
             background-color: #dc2626 !important;
             color: white !important;
@@ -63,6 +96,7 @@ def render_sample_booking_management(hero):
             color: white !important;
             border-color: #b91c1c !important;
         }
+
         </style>
         """,
         unsafe_allow_html=True,
@@ -159,8 +193,8 @@ def render_sample_booking_management(hero):
 
                 with st.container(border=True):
 
-                    col1, col2, col3, col4, col5 = st.columns(
-                        [1.4, 2.4, 1.7, 0.8, 1.1],
+                    col1, col2, col3, col4, col5, col6 = st.columns(
+                        [1.4, 2.4, 1.7, 0.8, 1.4, 1.1],
                         vertical_alignment="center",
                     )
 
@@ -220,9 +254,14 @@ def render_sample_booking_management(hero):
                     # -----------------------------------------
 
                     with col4:
+
                         with st.container(
-                            key="booking_view"
+                            key=(
+                                f"booking_view_"
+                                f"{booking['booking_group_id']}"
+                            )
                         ):
+
                             if st.button(
                                 "View",
                                 key=(
@@ -231,26 +270,59 @@ def render_sample_booking_management(hero):
                                 ),
                                 width="stretch",
                             ):
+
                                 st.session_state[
                                     "selected_booking_group_id"
                                 ] = booking[
                                     "booking_group_id"
                                 ]
 
-                                # st.session_state.pop(
-                                #     "show_cancel_booking",
-                                #     None,
-                                # )
-
                                 st.rerun()
 
+
                     # -----------------------------------------
-                    # Print
+                    # Return Samples
                     # -----------------------------------------
 
                     with col5:
 
+                        with st.container(
+                            key=(
+                                f"booking_return_"
+                                f"{booking['booking_group_id']}"
+                            )
+                        ):
+
+                            if st.button(
+                                "Return Samples",
+                                key=(
+                                    f"return_booking_"
+                                    f"{booking['booking_group_id']}"
+                                ),
+                                width="stretch",
+                            ):
+
+                                st.session_state[
+                                    "selected_return_booking_group_id"
+                                ] = str(
+                                    booking["booking_group_id"]
+                                )
+
+                                st.session_state[
+                                    "workflow_page"
+                                ] = "Sample Return"
+
+                                st.rerun()
+
+
+                    # -----------------------------------------
+                    # Print Booking Confirmation Form
+                    # -----------------------------------------
+
+                    with col6:
+
                         try:
+
                             print_details = (
                                 get_booking_group_details(
                                     booking[
@@ -269,18 +341,20 @@ def render_sample_booking_management(hero):
                                 )
 
                                 with st.container(
-                                    key="booking_print"
+                                    key=(
+                                        f"booking_row_print_"
+                                        f"{booking['booking_group_id']}"
+                                    )
                                 ):
 
                                     st.download_button(
-                                        "Print PDF",
+                                        "Print",
                                         data=pdf_bytes,
                                         file_name=(
                                             f"{booking['booking_number']}_"
                                             f"Booking_Confirmation.pdf"
                                         ),
                                         mime="application/pdf",
-                                        type="primary",
                                         key=(
                                             f"print_booking_row_"
                                             f"{booking['booking_group_id']}"
@@ -289,6 +363,7 @@ def render_sample_booking_management(hero):
                                     )
 
                         except Exception as exc:
+
                             st.button(
                                 "Print PDF",
                                 disabled=True,
@@ -299,6 +374,10 @@ def render_sample_booking_management(hero):
                                 help=str(exc),
                                 width="stretch",
                             )
+
+        # -------------------------------------------------
+        # Booking Item Lisings
+        # -------------------------------------------------
 
         selected_booking_group_id = (
             st.session_state.get(
@@ -654,6 +733,268 @@ def render_sample_booking_management(hero):
                                 st.error(
                                     f"Could not cancel booking: {exc}"
                                 )
+
+                # -------------------------------------------------
+                # Return Inspection
+                # -------------------------------------------------
+
+                if booking["booking_status"] == "Reserved":
+
+                    st.markdown("### Return Inspection")
+
+                    try:
+                        return_checks = (
+                            get_booking_return_checks(
+                                booking[
+                                    "booking_group_id"
+                                ]
+                            )
+                        )
+
+                    except Exception as exc:
+                        st.error(
+                            (
+                                "Could not load return "
+                                f"inspection data: {exc}"
+                            )
+                        )
+                        return_checks = []
+
+                    return_checks_by_item = {
+                        str(check["booking_item_id"]): check
+                        for check in return_checks
+                    }
+
+                    checked_count = len(
+                        return_checks_by_item
+                    )
+
+                    st.caption(
+                        (
+                            f"{checked_count} of "
+                            f"{len(samples)} samples checked"
+                        )
+                    )
+
+                    for sample in samples:
+
+                        booking_item_id = str(
+                            sample["booking_item_id"]
+                        )
+
+                        existing_check = (
+                            return_checks_by_item.get(
+                                booking_item_id
+                            )
+                        )
+
+                        with st.container(border=True):
+
+                            st.write(
+                                f"**{sample['sample_name']}**"
+                            )
+
+                            st.caption(
+                                (
+                                    f"{sample['sample_id']} · "
+                                    f"{sample['location_code'] or ''} "
+                                    f"{sample['location_name'] or ''}"
+                                )
+                            )
+
+                            if existing_check:
+
+                                status = existing_check[
+                                    "return_status"
+                                ]
+
+                                if status == "Good":
+                                    st.success(
+                                        "Return checked - Good"
+                                    )
+
+                                elif status == "Damaged":
+                                    st.error(
+                                        "Return checked - Damaged"
+                                    )
+
+                                elif status == "Incomplete":
+                                    st.warning(
+                                        "Return checked - Incomplete"
+                                    )
+
+                                elif status == "Missing":
+                                    st.error(
+                                        "Return checked - Missing"
+                                    )
+
+                                st.caption(
+                                    (
+                                        "Checked by "
+                                        f"{existing_check['checked_by']}"
+                                    )
+                                )
+
+                            inspect_key = (
+                                f"inspect_return_"
+                                f"{booking_item_id}"
+                            )
+
+                            if st.button(
+                                (
+                                    "Update Return Check"
+                                    if existing_check
+                                    else "Check Return"
+                                ),
+                                key=inspect_key,
+                                width="stretch",
+                            ):
+
+                                st.session_state[
+                                    "return_inspection_item_id"
+                                ] = booking_item_id
+
+                            selected_return_item = (
+                                st.session_state.get(
+                                    "return_inspection_item_id"
+                                )
+                            )
+
+                            if (
+                                selected_return_item
+                                == booking_item_id
+                            ):
+
+                                with st.form(
+                                    (
+                                        f"return_form_"
+                                        f"{booking_item_id}"
+                                    )
+                                ):
+
+                                    return_status = (
+                                        st.radio(
+                                            "Return Status *",
+                                            [
+                                                "Good",
+                                                "Damaged",
+                                                "Incomplete",
+                                                "Missing",
+                                            ],
+                                            horizontal=True,
+                                        )
+                                    )
+
+                                    damage_details = None
+                                    missing_details = None
+
+                                    if (
+                                        return_status
+                                        == "Damaged"
+                                    ):
+
+                                        damage_details = (
+                                            st.text_area(
+                                                "Describe the damage *"
+                                            )
+                                        )
+
+                                    elif (
+                                        return_status
+                                        == "Incomplete"
+                                    ):
+
+                                        missing_details = (
+                                            st.text_area(
+                                                (
+                                                    "What part or "
+                                                    "component is missing? *"
+                                                )
+                                            )
+                                        )
+
+                                    elif (
+                                        return_status
+                                        == "Missing"
+                                    ):
+
+                                        missing_details = (
+                                            st.text_area(
+                                                (
+                                                    "Missing item "
+                                                    "details"
+                                                )
+                                            )
+                                        )
+
+                                    checked_by = (
+                                        st.text_input(
+                                            "Checked By *"
+                                        )
+                                    )
+
+                                    return_notes = (
+                                        st.text_area(
+                                            "Notes"
+                                        )
+                                    )
+
+                                    save_return = (
+                                        st.form_submit_button(
+                                            "Save Return Check",
+                                            type="primary",
+                                            width="stretch",
+                                        )
+                                    )
+
+                                if save_return:
+
+                                    try:
+
+                                        save_sample_return_check(
+                                            booking_group_id=booking[
+                                                "booking_group_id"
+                                            ],
+                                            booking_item_id=sample[
+                                                "booking_item_id"
+                                            ],
+                                            sample_record_id=sample[
+                                                "sample_record_id"
+                                            ],
+                                            return_status=return_status,
+                                            checked_by=checked_by,
+                                            damage_details=damage_details,
+                                            missing_details=missing_details,
+                                            notes=return_notes,
+                                        )
+
+                                        st.session_state.pop(
+                                            "return_inspection_item_id",
+                                            None,
+                                        )
+
+                                        st.session_state[
+                                            "booking_management_flash"
+                                        ] = {
+                                            "type": "success",
+                                            "message": (
+                                                f"Return check saved "
+                                                f"for "
+                                                f"{sample['sample_id']}."
+                                            ),
+                                        }
+
+                                        st.rerun()
+
+                                    except Exception as exc:
+
+                                        st.error(
+                                            (
+                                                "Could not save "
+                                                "return check: "
+                                                f"{exc}"
+                                            )
+                                        )
 
 
     # ---------------------------------------------------------

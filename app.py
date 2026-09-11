@@ -29,6 +29,10 @@ from pages_ui.sample_booking_management import (
     render_sample_booking_management,
 )
 
+from pages_ui.sample_return import (
+    render_sample_return_page,
+)
+
 from utils.qr import build_sample_qr
 from utils.tag import build_warehouse_tag
 
@@ -153,20 +157,26 @@ with st.sidebar:
     st.caption("Asset Tracking & Operational Visibility")
     st.markdown("---")
 
-    page = st.radio(
+    selected_page = st.radio(
         "Navigate",
         [
             "Executive Dashboard",
             "Sample Search",
             "Sample Detail",
             "Sample Intake",
-            "Sample Booking Management",
-            "Sample Booking",
+            "Bookings & Returns",
+            "Book Samples",
             "QR Action Hub",
         ],
         label_visibility="collapsed",
         key="page",
     )
+
+    workflow_page = st.session_state.get(
+        "workflow_page"
+    )
+
+    page = workflow_page or selected_page
 
     st.markdown("---")
     st.caption("Executive Demo · Streamlit MVP")
@@ -671,11 +681,14 @@ elif page == "Sample Intake":
 
                     st.rerun()
 
-elif page == "Sample Booking":
+elif page == "Book Samples":
     render_sample_booking(hero)
 
-elif page == "Sample Booking Management":
+elif page == "Bookings & Returns":
     render_sample_booking_management(hero)
+
+elif page == "Sample Return":
+    render_sample_return_page(hero)
 
 elif page == "QR Action Hub":
     hero(
