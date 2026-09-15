@@ -166,7 +166,7 @@ def render_sample_booking_management(hero):
 
     tabs = st.tabs(
         [
-            f"Upcoming Bookings ({len(upcoming_bookings)})",
+            f"Bookings ({len(upcoming_bookings)})",
             f"Sample Requests ({len(pending_requests)})",
             f"Booking History ({len(historical_bookings)})",
         ]
