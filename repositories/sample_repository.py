@@ -853,6 +853,10 @@ def create_sample_booking(
 
             sample = cur.fetchone()
 
+            previous_location_id = (
+                sample["current_location_id"]
+            )
+
             if sample is None:
                 raise ValueError(
                     "Sample could not be found."
@@ -2070,6 +2074,19 @@ def save_sample_return_check(
                 new_condition = "Good"
                 new_asset_state = "Active"
 
+                return_location_id = submitted.get(
+                    "return_location_id"
+                )
+
+                if not return_location_id:
+                    raise ValueError(
+                        "Return location is required "
+                        "for a Good sample."
+                    )
+
+                new_location_id = return_location_id
+
+
             elif return_status == "Damaged":
 
                 event_type = "DAMAGE_REPORTED"
@@ -2083,6 +2100,8 @@ def save_sample_return_check(
 
                 new_condition = "Damaged"
                 new_asset_state = "Damaged"
+                new_location_id = hold_location_id
+
 
             elif return_status == "Incomplete":
 
@@ -2097,16 +2116,13 @@ def save_sample_return_check(
 
                 new_condition = "Incomplete"
                 new_asset_state = "Inactive"
+                new_location_id = hold_location_id
+
 
             elif return_status == "Not Returned":
 
-                event_type = (
-                    "SAMPLE_NOT_RETURNED"
-                )
-
-                title = (
-                    "Sample Not Returned"
-                )
+                event_type = "SAMPLE_NOT_RETURNED"
+                title = "Sample Not Returned"
 
                 details = (
                     "Sample was not returned "
@@ -2116,6 +2132,7 @@ def save_sample_return_check(
 
                 new_condition = "Unknown"
                 new_asset_state = "Lost"
+                new_location_id = None
 
             # -------------------------------------------------
             # Append optional notes
@@ -2135,14 +2152,24 @@ def save_sample_return_check(
                 INSERT INTO sample_events (
                     sample_record_id,
                     event_type,
+                    event_date,
                     title,
-                    details
+                    details,
+                    actor,
+                    previous_location_id,
+                    new_location_id,
+                    created_at
                 )
                 VALUES (
                     %s,
                     %s,
+                    NOW(),
                     %s,
-                    %s
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    NOW()
                 );
                 """,
                 (
@@ -2150,6 +2177,9 @@ def save_sample_return_check(
                     event_type,
                     title,
                     details,
+                    checked_by.strip(),
+                    previous_location_id,
+                    new_location_id,
                 ),
             )
 
@@ -2181,6 +2211,50 @@ def save_sample_return_check(
         "condition": new_condition,
         "asset_state": new_asset_state,
     }
+
+# -------------------------------------------------
+# Default repair completion to original location
+# -------------------------------------------------
+def get_issue_previous_location(issue_id):
+    """
+    Return the sample location immediately before
+    it entered the issue/hold workflow.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    sl.id,
+                    sl.code,
+                    sl.name
+                FROM sample_issues si
+
+                JOIN sample_events se
+                    ON se.sample_record_id =
+                       si.sample_record_id
+
+                JOIN sample_locations sl
+                    ON sl.id =
+                       se.previous_location_id
+
+                WHERE si.id = %s
+                  AND se.new_location_id = (
+                      SELECT id
+                      FROM sample_locations
+                      WHERE code = 'H1'
+                      LIMIT 1
+                  )
+
+                ORDER BY se.event_date DESC
+                LIMIT 1;
+                """,
+                (issue_id,),
+            )
+
+            return cur.fetchone()
+        
 
 def complete_booking_return(
     *,
@@ -2388,6 +2462,37 @@ def complete_booking_return(
                             "sample_record_id"
                         ]
                     )
+
+                    # -----------------------------------------
+                    # Lock sample and preserve current location
+                    # -----------------------------------------
+
+                    cur.execute(
+                        """
+                        SELECT
+                            current_location_id
+                        FROM sample_master
+                        WHERE id = %s
+                        FOR UPDATE;
+                        """,
+                        (
+                            sample_record_id,
+                        ),
+                    )
+
+                    sample = cur.fetchone()
+
+                    if not sample:
+                        raise ValueError(
+                            "Sample could not be found."
+                        )
+
+                    previous_location_id = (
+                        sample["current_location_id"]
+                    )
+
+
+
 
                     if (
                         booking_item[
@@ -2650,14 +2755,24 @@ def complete_booking_return(
                         INSERT INTO sample_events (
                             sample_record_id,
                             event_type,
+                            event_date,
                             title,
-                            details
+                            details,
+                            actor,
+                            previous_location_id,
+                            new_location_id,
+                            created_at
                         )
                         VALUES (
                             %s,
                             %s,
+                            NOW(),
                             %s,
-                            %s
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            NOW()
                         );
                         """,
                         (
@@ -2665,6 +2780,9 @@ def complete_booking_return(
                             event_type,
                             title,
                             details,
+                            checked_by,
+                            previous_location_id,
+                            new_location_id,
                         ),
                     )
 
@@ -2782,14 +2900,20 @@ def complete_booking_return(
                         INSERT INTO sample_events (
                             sample_record_id,
                             event_type,
+                            event_date,
                             title,
-                            details
+                            details,
+                            actor,
+                            created_at
                         )
                         VALUES (
                             %s,
                             'BOOKING_COMPLETED',
+                            NOW(),
                             'Booking Completed',
-                            %s
+                            %s,
+                            %s,
+                            NOW()
                         );
                         """,
                         (
@@ -2800,6 +2924,7 @@ def complete_booking_return(
                                 "completed after return "
                                 f"inspection by {checked_by}."
                             ),
+                            checked_by,
                         ),
                     )
 
@@ -3523,13 +3648,16 @@ def complete_sample_repair(
             "Return location is required."
         )
 
+    completed_by = completed_by.strip()
+    completion_notes = completion_notes.strip()
+
     with get_connection() as conn:
         try:
             with conn.cursor() as cur:
 
-                #
+                # -----------------------------------------
                 # Lock issue
-                #
+                # -----------------------------------------
 
                 cur.execute(
                     """
@@ -3564,14 +3692,16 @@ def complete_sample_repair(
                         "under repair."
                     )
 
-                #
+                # -----------------------------------------
                 # Lock active repair
-                #
+                # -----------------------------------------
 
                 cur.execute(
                     """
                     SELECT
                         id,
+                        issue_id,
+                        sample_record_id,
                         repair_status
                     FROM sample_repairs
                     WHERE issue_id = %s
@@ -3590,12 +3720,41 @@ def complete_sample_repair(
 
                 if not repair:
                     raise ValueError(
-                        "No active repair could be found."
+                        "No active repair could be found "
+                        "for this issue."
                     )
 
-                #
+                # -----------------------------------------
+                # Lock sample and preserve H1 location
+                # -----------------------------------------
+
+                cur.execute(
+                    """
+                    SELECT
+                        current_location_id
+                    FROM sample_master
+                    WHERE id = %s
+                    FOR UPDATE;
+                    """,
+                    (
+                        issue["sample_record_id"],
+                    ),
+                )
+
+                sample = cur.fetchone()
+
+                if not sample:
+                    raise ValueError(
+                        "Sample could not be found."
+                    )
+
+                previous_location_id = (
+                    sample["current_location_id"]
+                )
+
+                # -----------------------------------------
                 # Validate return location
-                #
+                # -----------------------------------------
 
                 if (
                     final_disposition
@@ -3629,9 +3788,9 @@ def complete_sample_repair(
                             "final sample location."
                         )
 
-                #
+                # -----------------------------------------
                 # Complete repair record
-                #
+                # -----------------------------------------
 
                 cur.execute(
                     """
@@ -3646,16 +3805,16 @@ def complete_sample_repair(
                     WHERE id = %s;
                     """,
                     (
-                        completed_by.strip(),
-                        completion_notes.strip(),
+                        completed_by,
+                        completion_notes,
                         final_disposition,
                         repair["id"],
                     ),
                 )
 
-                #
+                # -----------------------------------------
                 # Apply final disposition
-                #
+                # -----------------------------------------
 
                 if (
                     final_disposition
@@ -3679,24 +3838,30 @@ def complete_sample_repair(
                     )
 
                     issue_status = "Resolved"
+
                     resolution_action = (
                         "Return to Sample Pool"
                     )
 
-                    event_type = "SAMPLE_RESTORED"
-                    event_title = "Sample restored"
+                    event_type = (
+                        "SAMPLE_RESTORED"
+                    )
+
+                    event_title = (
+                        "Sample Restored"
+                    )
+
+                    new_location_id = (
+                        return_location_id
+                    )
 
                 elif (
                     final_disposition
                     == "Convert to Refurbished"
                 ):
 
-                    #
-                    # We have not built refurbished_items
-                    # yet. For now, remove the sample from
-                    # the active sample pool while preserving
-                    # its complete history.
-                    #
+                    # Temporary behaviour until the
+                    # refurbished_items module is added.
 
                     cur.execute(
                         """
@@ -3725,8 +3890,10 @@ def complete_sample_repair(
                     )
 
                     event_title = (
-                        "Converted to refurbished"
+                        "Converted to Refurbished"
                     )
+
+                    new_location_id = None
 
                 else:
 
@@ -3747,12 +3914,19 @@ def complete_sample_repair(
                     issue_status = "Retired"
                     resolution_action = "Retire"
 
-                    event_type = "SAMPLE_RETIRED"
-                    event_title = "Sample retired"
+                    event_type = (
+                        "SAMPLE_RETIRED"
+                    )
 
-                #
+                    event_title = (
+                        "Sample Retired"
+                    )
+
+                    new_location_id = None
+
+                # -----------------------------------------
                 # Close issue
-                #
+                # -----------------------------------------
 
                 cur.execute(
                     """
@@ -3769,15 +3943,15 @@ def complete_sample_repair(
                     (
                         issue_status,
                         resolution_action,
-                        completion_notes.strip(),
-                        completed_by.strip(),
+                        completion_notes,
+                        completed_by,
                         issue_id,
                     ),
                 )
 
-                #
+                # -----------------------------------------
                 # Record lifecycle event
-                #
+                # -----------------------------------------
 
                 cur.execute(
                     """
@@ -3788,12 +3962,16 @@ def complete_sample_repair(
                         title,
                         details,
                         actor,
+                        previous_location_id,
+                        new_location_id,
                         created_at
                     )
                     VALUES (
                         %s,
                         %s,
                         NOW(),
+                        %s,
+                        %s,
                         %s,
                         %s,
                         %s,
@@ -3804,13 +3982,22 @@ def complete_sample_repair(
                         issue["sample_record_id"],
                         event_type,
                         event_title,
-                        completion_notes.strip(),
-                        completed_by.strip(),
+                        completion_notes,
+                        completed_by,
+                        previous_location_id,
+                        new_location_id,
                     ),
                 )
 
-                conn.commit()
+            conn.commit()
 
         except Exception:
             conn.rollback()
             raise
+
+    return {
+        "issue_id": issue_id,
+        "repair_id": repair["id"],
+        "issue_status": issue_status,
+        "final_disposition": final_disposition,
+    }

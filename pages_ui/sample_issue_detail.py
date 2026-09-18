@@ -7,6 +7,7 @@ from repositories.sample_repository import (
     get_sample_issue_media,
     get_sample_issue_repair,
     get_sample_locations,
+    get_issue_previous_location,
     retire_sample_from_issue,
     start_sample_repair,
 )
@@ -111,10 +112,6 @@ def render_sample_issue_detail_page(hero):
         issue_id
     )
 
-    repair = get_sample_issue_repair(
-        issue_id
-    )
-
     if not issue:
         st.error(
             "The selected sample issue could not be found."
@@ -132,6 +129,16 @@ def render_sample_issue_detail_page(hero):
             st.rerun()
 
         return
+
+    repair = get_sample_issue_repair(
+        issue_id
+    )
+
+    previous_location = (
+        get_issue_previous_location(
+            issue["issue_id"]
+        )
+    )
 
     #
     # Back
@@ -649,9 +656,28 @@ def render_sample_issue_detail_page(hero):
                     )
 
                 else:
+                    #
+                    # Default to the sample's location
+                    # before it entered H1.
+                    #
+
+                    default_index = 0
+
+                    if previous_location:
+                        for index, location in enumerate(
+                            available_locations
+                        ):
+                            if (
+                                location["id"]
+                                == previous_location["id"]
+                            ):
+                                default_index = index
+                                break
+
                     selected_location = st.selectbox(
                         "Return location",
                         options=available_locations,
+                        index=default_index,
                         format_func=lambda location: (
                             f"{location['code']} — "
                             f"{location['name']}"

@@ -187,6 +187,42 @@ with st.sidebar:
         key="page",
     )
 
+    last_sidebar_page = st.session_state.get(
+    "_last_sidebar_page"
+    )
+
+    if (
+        last_sidebar_page is not None
+        and selected_page != last_sidebar_page
+    ):
+        # The user intentionally selected another
+        # page from the sidebar. Leave any hidden
+        # workflow and follow the sidebar navigation.
+        st.session_state.pop(
+            "workflow_page",
+            None,
+        )
+
+        st.session_state.pop(
+            "selected_sample_issue_id",
+            None,
+        )
+
+        st.session_state.pop(
+            "selected_return_booking_group_id",
+            None,
+        )
+
+    st.session_state[
+        "_last_sidebar_page"
+    ] = selected_page
+
+    workflow_page = st.session_state.get(
+        "workflow_page"
+    )
+
+    page = workflow_page or selected_page
+
     workflow_page = st.session_state.get(
         "workflow_page"
     )
