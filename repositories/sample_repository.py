@@ -3011,3 +3011,806 @@ def get_sample_issue_details(issue_id):
             )
 
             return cur.fetchone()
+
+
+
+def add_sample_issue_media(
+    *,
+    sample_record_id,
+    issue_id,
+    original_filename,
+    storage_path,
+    uploaded_by,
+    caption=None,
+    media_type="Damage",
+    storage_provider="local",
+):
+    """
+    Add metadata for a photo or file attached
+    to a sample issue.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO sample_media (
+                    sample_record_id,
+                    issue_id,
+                    media_type,
+                    storage_provider,
+                    storage_path,
+                    original_filename,
+                    caption,
+                    uploaded_by,
+                    uploaded_at,
+                    created_at
+                )
+                VALUES (
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    NOW(),
+                    NOW()
+                )
+                RETURNING id;
+                """,
+                (
+                    sample_record_id,
+                    issue_id,
+                    media_type,
+                    storage_provider,
+                    storage_path,
+                    original_filename,
+                    caption,
+                    uploaded_by,
+                ),
+            )
+
+            row = cur.fetchone()
+            conn.commit()
+
+            return row["id"]
+
+# -----------------------------------------
+# Add photos
+# -----------------------------------------
+def get_sample_issue_media(issue_id):
+    """
+    Return all media attached to one sample issue.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    sample_record_id,
+                    issue_id,
+                    media_type,
+                    storage_provider,
+                    storage_path,
+                    original_filename,
+                    caption,
+                    uploaded_by,
+                    uploaded_at
+                FROM sample_media
+                WHERE issue_id = %s
+                ORDER BY uploaded_at DESC;
+                """,
+                (issue_id,),
+            )
+
+            return cur.fetchall()
+
+# -----------------------------------------
+# Repair Sample Repair
+# -----------------------------------------
+
+def start_sample_repair(
+    *,
+    issue_id,
+    started_by,
+    repair_notes=None,
+):
+    """
+    Start repair work for a damaged sample issue.
+
+    Creates a repair record and moves the issue
+    to Under Repair.
+    """
+
+    if not started_by or not started_by.strip():
+        raise ValueError(
+            "Started by is required."
+        )
+
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+
+                #
+                # Lock issue
+                #
+
+                cur.execute(
+                    """
+                    SELECT
+                        id,
+                        sample_record_id,
+                        issue_type,
+                        issue_status
+                    FROM sample_issues
+                    WHERE id = %s
+                    FOR UPDATE;
+                    """,
+                    (issue_id,),
+                )
+
+                issue = cur.fetchone()
+
+                if not issue:
+                    raise ValueError(
+                        "Sample issue could not be found."
+                    )
+
+                if issue["issue_type"] != "Damaged":
+                    raise ValueError(
+                        "Only damaged samples can "
+                        "be sent for repair."
+                    )
+
+                if issue["issue_status"] != "Open":
+                    raise ValueError(
+                        "This issue is no longer open."
+                    )
+
+                #
+                # Prevent duplicate active repair
+                #
+
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM sample_repairs
+                    WHERE issue_id = %s
+                      AND repair_status IN (
+                          'Pending',
+                          'In Progress'
+                      )
+                    LIMIT 1;
+                    """,
+                    (issue_id,),
+                )
+
+                if cur.fetchone():
+                    raise ValueError(
+                        "An active repair already "
+                        "exists for this issue."
+                    )
+
+                #
+                # Create repair
+                #
+
+                cur.execute(
+                    """
+                    INSERT INTO sample_repairs (
+                        issue_id,
+                        sample_record_id,
+                        repair_status,
+                        repair_notes,
+                        repair_started_by,
+                        repair_started_at,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        %s,
+                        %s,
+                        'In Progress',
+                        %s,
+                        %s,
+                        NOW(),
+                        NOW(),
+                        NOW()
+                    )
+                    RETURNING id;
+                    """,
+                    (
+                        issue_id,
+                        issue["sample_record_id"],
+                        repair_notes.strip()
+                        if repair_notes
+                        else None,
+                        started_by.strip(),
+                    ),
+                )
+
+                repair = cur.fetchone()
+
+                #
+                # Update issue
+                #
+
+                cur.execute(
+                    """
+                    UPDATE sample_issues
+                    SET
+                        issue_status = 'Under Repair',
+                        assigned_to = %s,
+                        updated_at = NOW()
+                    WHERE id = %s;
+                    """,
+                    (
+                        started_by.strip(),
+                        issue_id,
+                    ),
+                )
+
+                #
+                # Record repair-started event
+                #
+
+                cur.execute(
+                    """
+                    INSERT INTO sample_events (
+                        sample_record_id,
+                        event_type,
+                        event_date,
+                        title,
+                        details,
+                        actor,
+                        created_at
+                    )
+                    VALUES (
+                        %s,
+                        'REPAIR_STARTED',
+                        NOW(),
+                        'Repair started',
+                        %s,
+                        %s,
+                        NOW()
+                    );
+                    """,
+                    (
+                        issue["sample_record_id"],
+                        (
+                            repair_notes.strip()
+                            if repair_notes
+                            else "Sample sent for repair."
+                        ),
+                        started_by.strip(),
+                    ),
+                )
+
+                conn.commit()
+
+                return repair["id"]
+
+        except Exception:
+            conn.rollback()
+            raise
+
+# -----------------------------------------
+# Retire Sample
+# -----------------------------------------
+def retire_sample_from_issue(
+    *,
+    issue_id,
+    retired_by,
+    reason=None,
+):
+    """
+    Retire a sample directly from an open issue.
+    """
+
+    if not retired_by or not retired_by.strip():
+        raise ValueError(
+            "Retired by is required."
+        )
+
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    SELECT
+                        id,
+                        sample_record_id,
+                        issue_status
+                    FROM sample_issues
+                    WHERE id = %s
+                    FOR UPDATE;
+                    """,
+                    (issue_id,),
+                )
+
+                issue = cur.fetchone()
+
+                if not issue:
+                    raise ValueError(
+                        "Sample issue could not be found."
+                    )
+
+                if issue["issue_status"] != "Open":
+                    raise ValueError(
+                        "Only an open issue can "
+                        "be retired directly."
+                    )
+
+                resolution_notes = (
+                    reason.strip()
+                    if reason
+                    else None
+                )
+
+                #
+                # Retire physical sample
+                #
+
+                cur.execute(
+                    """
+                    UPDATE sample_master
+                    SET
+                        asset_state = 'Retired',
+                        current_location_id = NULL,
+                        updated_at = NOW()
+                    WHERE id = %s;
+                    """,
+                    (
+                        issue["sample_record_id"],
+                    ),
+                )
+
+                #
+                # Close issue
+                #
+
+                cur.execute(
+                    """
+                    UPDATE sample_issues
+                    SET
+                        issue_status = 'Retired',
+                        resolution_action = 'Retire',
+                        resolution_notes = %s,
+                        resolved_by = %s,
+                        resolved_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = %s;
+                    """,
+                    (
+                        resolution_notes,
+                        retired_by.strip(),
+                        issue_id,
+                    ),
+                )
+
+                #
+                # Record retirement event
+                #
+
+                cur.execute(
+                    """
+                    INSERT INTO sample_events (
+                        sample_record_id,
+                        event_type,
+                        event_date,
+                        title,
+                        details,
+                        actor,
+                        created_at
+                    )
+                    VALUES (
+                        %s,
+                        'SAMPLE_RETIRED',
+                        NOW(),
+                        'Sample retired',
+                        %s,
+                        %s,
+                        NOW()
+                    );
+                    """,
+                    (
+                        issue["sample_record_id"],
+                        (
+                            resolution_notes
+                            or "Sample retired from issue workflow."
+                        ),
+                        retired_by.strip(),
+                    ),
+                )
+
+                conn.commit()
+
+        except Exception:
+            conn.rollback()
+            raise
+
+# -----------------------------------------
+# Retrieve Samples with Issue
+# -----------------------------------------
+def get_sample_issue_repair(issue_id):
+    """
+    Return the most recent repair record for an issue.
+    """
+
+    if not issue_id:
+        return None
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    id AS repair_id,
+                    issue_id,
+                    sample_record_id,
+                    repair_status,
+                    repair_notes,
+                    repair_started_by,
+                    repair_started_at,
+                    repair_completed_by,
+                    repair_completed_at,
+                    completion_notes,
+                    final_disposition,
+                    created_at,
+                    updated_at
+                FROM sample_repairs
+                WHERE issue_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1;
+                """,
+                (issue_id,),
+            )
+
+            return cur.fetchone()
+
+
+# -----------------------------------------
+# Complete Sample Repair
+# -----------------------------------------
+def complete_sample_repair(
+    *,
+    issue_id,
+    completed_by,
+    completion_notes,
+    final_disposition,
+    return_location_id=None,
+):
+    """
+    Complete a sample repair and apply the final disposition.
+
+    Supported dispositions:
+    - Return to Sample Pool
+    - Convert to Refurbished
+    - Retire
+    """
+
+    if not completed_by or not completed_by.strip():
+        raise ValueError(
+            "Completed by is required."
+        )
+
+    if not completion_notes or not completion_notes.strip():
+        raise ValueError(
+            "Completion notes are required."
+        )
+
+    allowed_dispositions = (
+        "Return to Sample Pool",
+        "Convert to Refurbished",
+        "Retire",
+    )
+
+    if final_disposition not in allowed_dispositions:
+        raise ValueError(
+            "Invalid final disposition."
+        )
+
+    if (
+        final_disposition == "Return to Sample Pool"
+        and not return_location_id
+    ):
+        raise ValueError(
+            "Return location is required."
+        )
+
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+
+                #
+                # Lock issue
+                #
+
+                cur.execute(
+                    """
+                    SELECT
+                        id,
+                        sample_record_id,
+                        issue_type,
+                        issue_status
+                    FROM sample_issues
+                    WHERE id = %s
+                    FOR UPDATE;
+                    """,
+                    (issue_id,),
+                )
+
+                issue = cur.fetchone()
+
+                if not issue:
+                    raise ValueError(
+                        "Sample issue could not be found."
+                    )
+
+                if issue["issue_type"] != "Damaged":
+                    raise ValueError(
+                        "This issue is not a damaged "
+                        "sample repair."
+                    )
+
+                if issue["issue_status"] != "Under Repair":
+                    raise ValueError(
+                        "This issue is not currently "
+                        "under repair."
+                    )
+
+                #
+                # Lock active repair
+                #
+
+                cur.execute(
+                    """
+                    SELECT
+                        id,
+                        repair_status
+                    FROM sample_repairs
+                    WHERE issue_id = %s
+                      AND repair_status IN (
+                          'Pending',
+                          'In Progress'
+                      )
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    FOR UPDATE;
+                    """,
+                    (issue_id,),
+                )
+
+                repair = cur.fetchone()
+
+                if not repair:
+                    raise ValueError(
+                        "No active repair could be found."
+                    )
+
+                #
+                # Validate return location
+                #
+
+                if (
+                    final_disposition
+                    == "Return to Sample Pool"
+                ):
+                    cur.execute(
+                        """
+                        SELECT
+                            id,
+                            code,
+                            name
+                        FROM sample_locations
+                        WHERE id = %s
+                          AND active = TRUE
+                        LIMIT 1;
+                        """,
+                        (return_location_id,),
+                    )
+
+                    return_location = cur.fetchone()
+
+                    if not return_location:
+                        raise ValueError(
+                            "Return location could "
+                            "not be found."
+                        )
+
+                    if return_location["code"] == "H1":
+                        raise ValueError(
+                            "H1 cannot be used as the "
+                            "final sample location."
+                        )
+
+                #
+                # Complete repair record
+                #
+
+                cur.execute(
+                    """
+                    UPDATE sample_repairs
+                    SET
+                        repair_status = 'Completed',
+                        repair_completed_by = %s,
+                        repair_completed_at = NOW(),
+                        completion_notes = %s,
+                        final_disposition = %s,
+                        updated_at = NOW()
+                    WHERE id = %s;
+                    """,
+                    (
+                        completed_by.strip(),
+                        completion_notes.strip(),
+                        final_disposition,
+                        repair["id"],
+                    ),
+                )
+
+                #
+                # Apply final disposition
+                #
+
+                if (
+                    final_disposition
+                    == "Return to Sample Pool"
+                ):
+
+                    cur.execute(
+                        """
+                        UPDATE sample_master
+                        SET
+                            condition = 'Good',
+                            asset_state = 'Active',
+                            current_location_id = %s,
+                            updated_at = NOW()
+                        WHERE id = %s;
+                        """,
+                        (
+                            return_location_id,
+                            issue["sample_record_id"],
+                        ),
+                    )
+
+                    issue_status = "Resolved"
+                    resolution_action = (
+                        "Return to Sample Pool"
+                    )
+
+                    event_type = "SAMPLE_RESTORED"
+                    event_title = "Sample restored"
+
+                elif (
+                    final_disposition
+                    == "Convert to Refurbished"
+                ):
+
+                    #
+                    # We have not built refurbished_items
+                    # yet. For now, remove the sample from
+                    # the active sample pool while preserving
+                    # its complete history.
+                    #
+
+                    cur.execute(
+                        """
+                        UPDATE sample_master
+                        SET
+                            asset_state = 'Retired',
+                            current_location_id = NULL,
+                            updated_at = NOW()
+                        WHERE id = %s;
+                        """,
+                        (
+                            issue["sample_record_id"],
+                        ),
+                    )
+
+                    issue_status = (
+                        "Converted to Refurbished"
+                    )
+
+                    resolution_action = (
+                        "Convert to Refurbished"
+                    )
+
+                    event_type = (
+                        "SAMPLE_CONVERTED_TO_REFURBISHED"
+                    )
+
+                    event_title = (
+                        "Converted to refurbished"
+                    )
+
+                else:
+
+                    cur.execute(
+                        """
+                        UPDATE sample_master
+                        SET
+                            asset_state = 'Retired',
+                            current_location_id = NULL,
+                            updated_at = NOW()
+                        WHERE id = %s;
+                        """,
+                        (
+                            issue["sample_record_id"],
+                        ),
+                    )
+
+                    issue_status = "Retired"
+                    resolution_action = "Retire"
+
+                    event_type = "SAMPLE_RETIRED"
+                    event_title = "Sample retired"
+
+                #
+                # Close issue
+                #
+
+                cur.execute(
+                    """
+                    UPDATE sample_issues
+                    SET
+                        issue_status = %s,
+                        resolution_action = %s,
+                        resolution_notes = %s,
+                        resolved_by = %s,
+                        resolved_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = %s;
+                    """,
+                    (
+                        issue_status,
+                        resolution_action,
+                        completion_notes.strip(),
+                        completed_by.strip(),
+                        issue_id,
+                    ),
+                )
+
+                #
+                # Record lifecycle event
+                #
+
+                cur.execute(
+                    """
+                    INSERT INTO sample_events (
+                        sample_record_id,
+                        event_type,
+                        event_date,
+                        title,
+                        details,
+                        actor,
+                        created_at
+                    )
+                    VALUES (
+                        %s,
+                        %s,
+                        NOW(),
+                        %s,
+                        %s,
+                        %s,
+                        NOW()
+                    );
+                    """,
+                    (
+                        issue["sample_record_id"],
+                        event_type,
+                        event_title,
+                        completion_notes.strip(),
+                        completed_by.strip(),
+                    ),
+                )
+
+                conn.commit()
+
+        except Exception:
+            conn.rollback()
+            raise

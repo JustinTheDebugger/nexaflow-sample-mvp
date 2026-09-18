@@ -1,7 +1,14 @@
 import streamlit as st
 
 from repositories.sample_repository import (
+    add_sample_issue_media,
+    complete_sample_repair,
     get_sample_issue_details,
+    get_sample_issue_media,
+    get_sample_issue_repair,
+    get_sample_locations,
+    retire_sample_from_issue,
+    start_sample_repair,
 )
 
 
@@ -101,6 +108,10 @@ def render_sample_issue_detail_page(hero):
         return
 
     issue = get_sample_issue_details(
+        issue_id
+    )
+
+    repair = get_sample_issue_repair(
         issue_id
     )
 
@@ -341,31 +352,470 @@ def render_sample_issue_detail_page(hero):
     # Action placeholder
     #
 
+    #
+    # Resolution
+    #
+
     st.divider()
     st.subheader("Resolution")
 
-    if issue["issue_status"] == "Open":
+    if (
+        issue["issue_type"] == "Damaged"
+        and issue["issue_status"] == "Open"
+    ):
 
-        if issue["issue_type"] == "Damaged":
-            st.info(
-                "Review the damage before deciding "
-                "whether to repair or retire this sample."
-            )
-
-        elif issue["issue_type"] == "Incomplete":
-            st.info(
-                "This sample is being held until the "
-                "missing component can be replenished."
-            )
-
-        elif issue["issue_type"] == "Not Returned":
-            st.info(
-                "This sample remains unresolved until "
-                "it is found, returned, or retired."
-            )
-
-    else:
         st.write(
-            f"Current workflow status: "
-            f"**{issue['issue_status']}**"
+            "Review the damage evidence and decide "
+            "how this sample should proceed."
+        )
+
+        repair_tab, retire_tab = st.tabs(
+            [
+                "Send for Repair",
+                "Retire Sample",
+            ]
+        )
+
+        #
+        # Send for Repair
+        #
+
+        with repair_tab:
+
+            st.caption(
+                "Move this sample into the repair workflow."
+            )
+
+            repair_started_by = st.text_input(
+                "Started by",
+                key=(
+                    "repair_started_by_"
+                    f"{issue['issue_id']}"
+                ),
+            )
+
+            repair_notes = st.text_area(
+                "Repair instructions / notes",
+                placeholder=(
+                    "e.g. Replace damaged rear pole "
+                    "and inspect surrounding fittings."
+                ),
+                key=(
+                    "repair_notes_"
+                    f"{issue['issue_id']}"
+                ),
+            )
+
+            if st.button(
+                "Send for Repair",
+                type="primary",
+                key=(
+                    "start_repair_"
+                    f"{issue['issue_id']}"
+                ),
+            ):
+
+                if not repair_started_by.strip():
+                    st.error(
+                        "Please enter who is "
+                        "starting the repair."
+                    )
+
+                else:
+                    try:
+                        start_sample_repair(
+                            issue_id=issue["issue_id"],
+                            started_by=(
+                                repair_started_by
+                            ),
+                            repair_notes=repair_notes,
+                        )
+
+                        st.success(
+                            "Sample sent for repair."
+                        )
+
+                        st.rerun()
+
+                    except Exception as exc:
+                        st.error(
+                            f"Could not start repair: {exc}"
+                        )
+
+        #
+        # Retire Sample
+        #
+
+        with retire_tab:
+
+            st.warning(
+                "Retiring removes this sample from "
+                "the active sample pool."
+            )
+
+            retired_by = st.text_input(
+                "Retired by",
+                key=(
+                    "retired_by_"
+                    f"{issue['issue_id']}"
+                ),
+            )
+
+            retirement_reason = st.text_area(
+                "Reason for retirement",
+                placeholder=(
+                    "e.g. Damage is beyond economical repair."
+                ),
+                key=(
+                    "retirement_reason_"
+                    f"{issue['issue_id']}"
+                ),
+            )
+
+            confirm_retirement = st.checkbox(
+                "I confirm this sample should be retired.",
+                key=(
+                    "confirm_retirement_"
+                    f"{issue['issue_id']}"
+                ),
+            )
+
+            if st.button(
+                "Retire Sample",
+                key=(
+                    "retire_sample_"
+                    f"{issue['issue_id']}"
+                ),
+            ):
+
+                if not retired_by.strip():
+                    st.error(
+                        "Please enter who is "
+                        "retiring the sample."
+                    )
+
+                elif not retirement_reason.strip():
+                    st.error(
+                        "Please enter the reason "
+                        "for retirement."
+                    )
+
+                elif not confirm_retirement:
+                    st.error(
+                        "Please confirm the retirement."
+                    )
+
+                else:
+                    try:
+                        retire_sample_from_issue(
+                            issue_id=issue["issue_id"],
+                            retired_by=retired_by,
+                            reason=retirement_reason,
+                        )
+
+                        st.success(
+                            "Sample retired."
+                        )
+
+                        st.rerun()
+
+                    except Exception as exc:
+                        st.error(
+                            f"Could not retire sample: {exc}"
+                        )
+
+
+    elif (
+        issue["issue_type"] == "Damaged"
+        and issue["issue_status"] == "Under Repair"
+    ):
+
+        if not repair:
+            st.error(
+                "This issue is marked Under Repair, "
+                "but no active repair record was found."
+            )
+
+        else:
+
+            #
+            # Current repair
+            #
+
+            st.markdown("### Repair")
+
+            repair_col1, repair_col2 = st.columns(
+                2,
+                vertical_alignment="top",
+            )
+
+            with repair_col1:
+                st.caption("REPAIR STATUS")
+                st.write(
+                    f"**{repair['repair_status']}**"
+                )
+
+                st.caption("STARTED BY")
+                st.write(
+                    repair["repair_started_by"]
+                    or "—"
+                )
+
+            with repair_col2:
+                st.caption("STARTED")
+                st.write(
+                    _format_date(
+                        repair["repair_started_at"]
+                    )
+                )
+
+                st.caption("CURRENT LOCATION")
+                st.write(
+                    issue["location_name"]
+                    or "—"
+                )
+
+            if repair["repair_notes"]:
+                st.caption("REPAIR INSTRUCTIONS")
+                st.write(
+                    repair["repair_notes"]
+                )
+
+            st.divider()
+
+            #
+            # Complete repair
+            #
+
+            st.markdown("### Complete Repair")
+
+            completed_by = st.text_input(
+                "Completed by",
+                key=(
+                    "repair_completed_by_"
+                    f"{issue['issue_id']}"
+                ),
+            )
+
+            completion_notes = st.text_area(
+                "Work completed",
+                placeholder=(
+                    "e.g. Rear pole replaced. "
+                    "Tent erected and inspected. "
+                    "No further damage found."
+                ),
+                key=(
+                    "repair_completion_notes_"
+                    f"{issue['issue_id']}"
+                ),
+            )
+
+            final_disposition = st.radio(
+                "Final disposition",
+                [
+                    "Return to Sample Pool",
+                    "Convert to Refurbished",
+                    "Retire",
+                ],
+                key=(
+                    "repair_disposition_"
+                    f"{issue['issue_id']}"
+                ),
+            )
+
+            return_location_id = None
+
+            #
+            # Return to sample pool
+            #
+
+            if (
+                final_disposition
+                == "Return to Sample Pool"
+            ):
+
+                locations = get_sample_locations()
+
+                available_locations = [
+                    location
+                    for location in locations
+                    if location["code"] != "H1"
+                ]
+
+                if not available_locations:
+                    st.error(
+                        "No active sample-room "
+                        "locations are available."
+                    )
+
+                else:
+                    selected_location = st.selectbox(
+                        "Return location",
+                        options=available_locations,
+                        format_func=lambda location: (
+                            f"{location['code']} — "
+                            f"{location['name']}"
+                        ),
+                        key=(
+                            "repair_return_location_"
+                            f"{issue['issue_id']}"
+                        ),
+                    )
+
+                    return_location_id = (
+                        selected_location["id"]
+                    )
+
+                st.info(
+                    "The sample will be restored to "
+                    "Good / Active and returned to "
+                    "the selected sample location."
+                )
+
+            #
+            # Convert to refurbished
+            #
+
+            elif (
+                final_disposition
+                == "Convert to Refurbished"
+            ):
+
+                st.warning(
+                    "The sample will leave the active "
+                    "sample pool. Its history will be "
+                    "preserved for the future "
+                    "Refurbished Items workflow."
+                )
+
+            #
+            # Retire
+            #
+
+            else:
+
+                st.warning(
+                    "The sample will be retired and "
+                    "removed from the active sample pool."
+                )
+
+            confirm_completion = st.checkbox(
+                "I confirm the repair is complete "
+                "and the selected disposition is correct.",
+                key=(
+                    "confirm_repair_completion_"
+                    f"{issue['issue_id']}"
+                ),
+            )
+
+            if st.button(
+                "Complete Repair",
+                type="primary",
+                key=(
+                    "complete_repair_"
+                    f"{issue['issue_id']}"
+                ),
+            ):
+
+                if not completed_by.strip():
+                    st.error(
+                        "Please enter who completed "
+                        "the repair."
+                    )
+
+                elif not completion_notes.strip():
+                    st.error(
+                        "Please describe the work "
+                        "completed."
+                    )
+
+                elif (
+                    final_disposition
+                    == "Return to Sample Pool"
+                    and not return_location_id
+                ):
+                    st.error(
+                        "Please select the return "
+                        "location."
+                    )
+
+                elif not confirm_completion:
+                    st.error(
+                        "Please confirm the repair "
+                        "completion."
+                    )
+
+                else:
+                    try:
+                        complete_sample_repair(
+                            issue_id=issue["issue_id"],
+                            completed_by=completed_by,
+                            completion_notes=(
+                                completion_notes
+                            ),
+                            final_disposition=(
+                                final_disposition
+                            ),
+                            return_location_id=(
+                                return_location_id
+                            ),
+                        )
+
+                        st.success(
+                            "Repair completed."
+                        )
+
+                        st.rerun()
+
+                    except Exception as exc:
+                        st.error(
+                            "Could not complete "
+                            f"repair: {exc}"
+                        )
+
+
+    elif issue["issue_status"] in (
+        "Resolved",
+        "Retired",
+        "Converted to Refurbished",
+    ):
+
+        st.success(
+            f"This issue is {issue['issue_status']}."
+        )
+
+        if issue["resolution_action"]:
+            st.write(
+                "**Resolution:** "
+                f"{issue['resolution_action']}"
+            )
+
+        if issue["resolution_notes"]:
+            st.write(
+                issue["resolution_notes"]
+            )
+
+        if issue["resolved_by"]:
+            st.caption(
+                (
+                    f"Resolved by "
+                    f"{issue['resolved_by']} · "
+                    f"{_format_date(issue['resolved_at'])}"
+                )
+            )
+
+
+    elif issue["issue_type"] == "Incomplete":
+
+        st.info(
+            "This sample is on hold until the "
+            "missing component is replenished."
+        )
+
+
+    elif issue["issue_type"] == "Not Returned":
+
+        st.info(
+            "This sample remains unresolved until "
+            "it is found/returned or retired."
         )
