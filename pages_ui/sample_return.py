@@ -3,6 +3,7 @@ import streamlit as st
 from repositories.sample_repository import (
     complete_booking_return,
     get_booking_group_details,
+    get_sample_locations,
 )
 
 
@@ -65,7 +66,7 @@ def render_sample_return_page(hero):
         return
 
     # -------------------------------------------------
-    # Load booking
+    # Load booking details
     # -------------------------------------------------
 
     try:
@@ -84,6 +85,16 @@ def render_sample_return_page(hero):
 
         return
 
+    try:
+        locations = get_sample_locations()
+
+    except Exception as exc:
+        st.error(
+            f"Could not load sample locations: {exc}"
+        )
+        return
+
+
     if not booking_details:
 
         st.error(
@@ -91,6 +102,8 @@ def render_sample_return_page(hero):
         )
 
         return
+
+    
 
     booking = booking_details["booking"]
     samples = booking_details["samples"]
@@ -344,6 +357,56 @@ def render_sample_return_page(hero):
                 ),
             )
 
+            return_location_id = None
+
+            if return_status == "Good":
+
+                location_options = {
+                    (
+                        f"{location['code']} — "
+                        f"{location['name']}"
+                    ): location["id"]
+                    for location in locations
+                    if location["code"] != "H1"
+                }
+
+                selected_location = st.selectbox(
+                    "Return Location *",
+                    options=list(
+                        location_options.keys()
+                    ),
+                    key=(
+                        f"return_location_"
+                        f"{booking_item_id}"
+                    ),
+                )
+
+                return_location_id = (
+                    location_options[
+                        selected_location
+                    ]
+                )
+
+            elif return_status in {
+                "Damaged",
+                "Incomplete",
+            }:
+                st.info(
+                    (
+                        "Temporary location: "
+                        "**H1 — Repair / Hold Area**"
+                    )
+                )
+
+            else:
+                st.warning(
+                    (
+                        "This sample will be marked as "
+                        "**Not Returned / Lost** and will "
+                        "have no physical location."
+                    )
+                )
+
             # -----------------------------------------
             # Notes
             # -----------------------------------------
@@ -424,6 +487,9 @@ def render_sample_return_page(hero):
                     ),
                     "return_status": (
                         return_status
+                    ),
+                    "return_location_id": (
+                        return_location_id
                     ),
                     "notes": (
                         return_notes

@@ -1,7 +1,14 @@
 from db.connection import get_connection
 
 
+# =============================================================================
+# REFERENCE DATA
+# =============================================================================
+
 def get_sample_types():
+    """
+    Return all active sample types and their booking and approval rules.
+    """
     query = """
         SELECT
             id,
@@ -21,6 +28,9 @@ def get_sample_types():
 
 
 def get_sample_locations():
+    """
+    Return all active physical locations available for samples.
+    """
     query = """
         SELECT
             id,
@@ -38,6 +48,9 @@ def get_sample_locations():
 
 
 def get_categories():
+    """
+    Return all active product categories used to classify samples.
+    """
     query = """
         SELECT
             category_code,
@@ -52,7 +65,15 @@ def get_categories():
             cur.execute(query)
             return cur.fetchall()
 
+# =============================================================================
+# SAMPLE MASTER & LIFECYCLE
+# =============================================================================
+
 def get_samples():
+    """
+    Return the sample register with joined type, category, location, holder, condition,
+    and lifecycle-state details.
+    """
     query = """
         SELECT
             sm.id,
@@ -118,6 +139,10 @@ def get_samples():
 
 
 def get_sample_by_record_id(sample_record_id):
+    """
+    Return one sample by its internal record ID with joined type, category, and
+    location details.
+    """
     query = """
         SELECT
             sm.id,
@@ -185,6 +210,9 @@ def get_sample_by_record_id(sample_record_id):
 
 
 def get_sample_events(sample_record_id):
+    """
+    Return the lifecycle event history for one physical sample, newest first.
+    """
     query = """
         SELECT
             se.id,
@@ -240,6 +268,10 @@ def create_samples(
     notes,
     quantity,
 ):
+    """
+    Create one or more physical samples, reserve sequential sample IDs safely, and
+    record each sample's initial lifecycle event.
+    """
     if quantity < 1:
         raise ValueError(
             "Quantity must be at least 1."
@@ -438,6 +470,9 @@ def update_sample_details(
     source,
     notes,
 ):
+    """
+    Update editable master-data fields for an existing physical sample.
+    """
     query = """
         UPDATE sample_master
         SET
@@ -478,35 +513,15 @@ def update_sample_details(
             return updated_sample
 
 
-def get_sample_products(sample_record_id):
-    query = """
-        SELECT
-            sp.id,
-            sp.product_code,
-            sp.relationship_type,
-            sp.created_at
-        FROM sample_products sp
-        WHERE sp.sample_record_id = %s
-        ORDER BY
-            sp.relationship_type,
-            sp.product_code;
-    """
-
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                query,
-                (sample_record_id,),
-            )
-            return cur.fetchall()
-
-
 def link_sample_product(
     *,
     sample_record_id,
     product_code,
     relationship_type="Primary",
 ):
+    """
+    Create or update a product relationship for a physical sample.
+    """
     query = """
         INSERT INTO sample_products (
             sample_record_id,
@@ -549,6 +564,9 @@ def unlink_sample_product(
     sample_record_id,
     product_code,
 ):
+    """
+    Remove a product relationship from a physical sample.
+    """
     query = """
         DELETE FROM sample_products
         WHERE sample_record_id = %s
@@ -569,6 +587,10 @@ def unlink_sample_product(
 def get_active_products(
     category_code=None,
 ):
+    """
+    Return active products, optionally filtered by category code, for sample-product
+    linking.
+    """
     if category_code:
         query = """
             SELECT
@@ -630,7 +652,15 @@ def get_active_products(
             return cur.fetchall()
 
 
+# =============================================================================
+# SAMPLE ↔ PRODUCT LINKS
+# =============================================================================
+
 def get_sample_products(sample_record_id):
+    """
+    Return products linked to a sample, including relationship type and product display
+    information.
+    """
     query = """
         SELECT
             sp.id,
@@ -663,7 +693,14 @@ def get_sample_products(sample_record_id):
             return cur.fetchall()
         
 
+# =============================================================================
+# SAMPLE AVAILABILITY
+# =============================================================================
+
 def get_bookable_samples():
+    """
+    Return active samples whose sample type is configured as bookable.
+    """
     query = """
         SELECT
             sm.id,
@@ -715,6 +752,10 @@ def is_sample_available(
     start_date,
     end_date,
 ):
+    """
+    Check whether a sample has a conflicting active booking in the requested date
+    range.
+    """
     query = """
         SELECT EXISTS (
             SELECT 1
@@ -753,6 +794,10 @@ def get_available_samples(
     start_date,
     end_date,
 ):
+    """
+    Return bookable samples with no active booking conflict for the requested date
+    range.
+    """
     samples = get_bookable_samples()
 
     available = []
@@ -767,6 +812,10 @@ def get_available_samples(
 
     return available
 
+# =============================================================================
+# BOOKINGS & REQUESTS
+# =============================================================================
+
 def create_sample_booking(
     *,
     sample_record_id,
@@ -777,6 +826,10 @@ def create_sample_booking(
     end_date,
     notes,
 ):
+    """
+    Create a booking for one physical sample after locking it and performing a final
+    conflict check.
+    """
     with get_connection() as conn:
         with conn.cursor() as cur:
 
@@ -916,6 +969,9 @@ def create_sample_booking(
 
 
 def get_bookings():
+    """
+    Return individual sample bookings with sample and current-location details.
+    """
     query = """
         SELECT
             sb.id,
@@ -968,6 +1024,9 @@ def create_sample_request(
     purpose,
     request_notes,
 ):
+    """
+    Create a new sample request for review and return its ID and initial status.
+    """
     query = """
         INSERT INTO sample_requests (
             product_code,
@@ -1015,6 +1074,10 @@ def create_sample_request(
 
 
 def get_sample_requests():
+    """
+    Return sample requests with linked product names, prioritising requests pending
+    review.
+    """
     query = """
         SELECT
             sr.*,
@@ -1047,6 +1110,9 @@ def approve_sample_request(
     operations_email,
     manager_notes,
 ):
+    """
+    Approve a pending sample request and record its review information.
+    """
     query = """
         UPDATE sample_requests
         SET
@@ -1090,6 +1156,9 @@ def reject_sample_request(
     reviewed_by,
     rejection_reason,
 ):
+    """
+    Reject a pending sample request and record the reviewer and rejection reason.
+    """
     query = """
         UPDATE sample_requests
         SET
@@ -1130,6 +1199,10 @@ def search_available_samples(
     end_date,
     limit=25,
 ):
+    """
+    Search active, good-condition, bookable samples while excluding booking conflicts
+    for the requested dates.
+    """
     search_pattern = f"%{search_text.strip()}%"
 
     query = """
@@ -1213,6 +1286,10 @@ def create_sample_bookings(
     end_date,
     notes,
 ):
+    """
+    Create one booking group for multiple physical samples atomically, with validation
+    and lifecycle events.
+    """
     if not sample_record_ids:
         raise ValueError(
             "At least one sample must be selected."
@@ -1482,6 +1559,10 @@ def get_booking_groups(
     status=None,
     upcoming_only=False,
 ):
+    """
+    Return booking-group headers and sample counts, optionally filtered by status or
+    upcoming dates.
+    """
     query = """
         SELECT
             sbg.id AS booking_group_id,
@@ -1552,6 +1633,9 @@ def get_booking_groups(
 def get_booking_group_details(
     booking_group_id,
 ):
+    """
+    Return a booking-group header together with all physical samples in the booking.
+    """
     with get_connection() as conn:
         with conn.cursor() as cur:
 
@@ -1638,6 +1722,10 @@ def cancel_booking_group(
     cancelled_by,
     reason,
 ):
+    """
+    Cancel an active booking group and its reserved items, then record sample lifecycle
+    events.
+    """
     if not cancelled_by.strip():
         raise ValueError(
             "Cancelled By is required."
@@ -1766,7 +1854,9 @@ def cancel_booking_group(
     return booking["booking_number"]
 
 
-# RETURN SAMPLE FUNCTIONS
+# =============================================================================
+# SAMPLE RETURNS
+# =============================================================================
 
 def get_booking_return_checks(
     booking_group_id,
@@ -2101,21 +2191,10 @@ def complete_booking_return(
     """
     Complete the return for an entire booking atomically.
 
-    return_items example:
-    [
-        {
-            "booking_item_id": "...",
-            "sample_record_id": "...",
-            "return_status": "Good",
-            "notes": "",
-        },
-        {
-            "booking_item_id": "...",
-            "sample_record_id": "...",
-            "return_status": "Damaged",
-            "notes": "Bent rear pole",
-        },
-    ]
+    Every physical sample in the booking must have a return
+    status before the booking can be completed.
+
+    Non-good returns automatically create a Sample Issue.
     """
 
     allowed_statuses = {
@@ -2144,7 +2223,6 @@ def complete_booking_return(
     submitted_item_ids = set()
 
     for item in return_items:
-
         booking_item_id = str(
             item["booking_item_id"]
         )
@@ -2173,14 +2251,35 @@ def complete_booking_return(
     # -------------------------------------------------
 
     with get_connection() as conn:
-
         try:
-
             with conn.cursor() as cur:
 
-                # -------------------------------------------------
+                # -----------------------------------------
+                # Get Repair / Hold Area
+                # -----------------------------------------
+
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM sample_locations
+                    WHERE code = 'H1'
+                    AND active = TRUE
+                    LIMIT 1;
+                    """
+                )
+
+                hold_location = cur.fetchone()
+
+                if not hold_location:
+                    raise ValueError(
+                        "Repair / Hold Area (H1) could not be found."
+                    )
+
+                hold_location_id = hold_location["id"]
+
+                # -----------------------------------------
                 # Lock booking group
-                # -------------------------------------------------
+                # -----------------------------------------
 
                 cur.execute(
                     """
@@ -2216,9 +2315,9 @@ def complete_booking_return(
                         )
                     )
 
-                # -------------------------------------------------
+                # -----------------------------------------
                 # Lock booking items
-                # -------------------------------------------------
+                # -----------------------------------------
 
                 cur.execute(
                     """
@@ -2246,9 +2345,9 @@ def complete_booking_return(
                         )
                     )
 
-                # -------------------------------------------------
-                # Validate all booking items were submitted
-                # -------------------------------------------------
+                # -----------------------------------------
+                # Validate all items were submitted
+                # -----------------------------------------
 
                 expected_item_ids = {
                     str(item["id"])
@@ -2267,10 +2366,6 @@ def complete_booking_return(
                         )
                     )
 
-                # -------------------------------------------------
-                # Lookup submitted data by booking item
-                # -------------------------------------------------
-
                 submitted_by_item = {
                     str(
                         item["booking_item_id"]
@@ -2278,9 +2373,9 @@ def complete_booking_return(
                     for item in return_items
                 }
 
-                # -------------------------------------------------
-                # Process every physical sample
-                # -------------------------------------------------
+                # -----------------------------------------
+                # Process each physical sample
+                # -----------------------------------------
 
                 for booking_item in booking_items:
 
@@ -2359,9 +2454,9 @@ def complete_booking_return(
                         == "Incomplete"
                     )
 
-                    # -------------------------------------------------
-                    # Determine sample state
-                    # -------------------------------------------------
+                    # -----------------------------------------
+                    # Determine resulting sample state
+                    # -----------------------------------------
 
                     if return_status == "Good":
 
@@ -2382,6 +2477,20 @@ def complete_booking_return(
                         new_condition = "Good"
                         new_asset_state = "Active"
 
+                        return_location_id = submitted.get(
+                            "return_location_id"
+                        )
+
+                        if not return_location_id:
+                            raise ValueError(
+                                (
+                                    "A return location is required "
+                                    "for samples returned in Good condition."
+                                )
+                            )
+
+                        new_location_id = return_location_id
+
                     elif return_status == "Damaged":
 
                         event_type = (
@@ -2400,6 +2509,8 @@ def complete_booking_return(
 
                         new_condition = "Damaged"
                         new_asset_state = "Damaged"
+
+                        new_location_id = hold_location_id
 
                     elif return_status == "Incomplete":
 
@@ -2420,10 +2531,17 @@ def complete_booking_return(
                         new_condition = "Incomplete"
                         new_asset_state = "Inactive"
 
-                    elif return_status == "Not Returned":
+                        new_location_id = hold_location_id
 
-                        event_type = "SAMPLE_NOT_RETURNED"
-                        title = "Sample Not Returned"
+                    else:
+
+                        event_type = (
+                            "SAMPLE_NOT_RETURNED"
+                        )
+
+                        title = (
+                            "Sample Not Returned"
+                        )
 
                         details = (
                             "Sample was not returned "
@@ -2434,14 +2552,17 @@ def complete_booking_return(
                         new_condition = "Unknown"
                         new_asset_state = "Lost"
 
-                        if clean_notes:
-                            details += (
-                                f" Notes: {clean_notes}"
-                            )
+                        new_location_id = None
 
-                    # -------------------------------------------------
+                    # Add optional notes to the event.
+                    if clean_notes:
+                        details += (
+                            f" Notes: {clean_notes}"
+                        )
+
+                    # -----------------------------------------
                     # Save return inspection
-                    # -------------------------------------------------
+                    # -----------------------------------------
 
                     cur.execute(
                         """
@@ -2452,9 +2573,7 @@ def complete_booking_return(
                             return_status,
                             condition_on_return,
                             damage_reported,
-                            damage_details,
                             incomplete_reported,
-                            missing_details,
                             checked_by,
                             checked_at,
                             notes
@@ -2466,9 +2585,7 @@ def complete_booking_return(
                             %s,
                             %s,
                             %s,
-                            NULL,
                             %s,
-                            NULL,
                             %s,
                             NOW(),
                             %s
@@ -2483,15 +2600,15 @@ def complete_booking_return(
                                 EXCLUDED.condition_on_return,
                             damage_reported =
                                 EXCLUDED.damage_reported,
-                            missing_details = EXCLUDED.missing_details,
-                            damage_details = EXCLUDED.damage_details,
-                            incomplete_reported = EXCLUDED.incomplete_reported,
+                            incomplete_reported =
+                                EXCLUDED.incomplete_reported,
                             checked_by =
                                 EXCLUDED.checked_by,
                             checked_at = NOW(),
                             notes =
                                 EXCLUDED.notes,
-                            updated_at = NOW();
+                            updated_at = NOW()
+                        RETURNING id;
                         """,
                         (
                             booking_group_id,
@@ -2506,9 +2623,27 @@ def complete_booking_return(
                         ),
                     )
 
-                    # -------------------------------------------------
+                    # IMPORTANT:
+                    # Fetch RETURNING id immediately.
+                    return_check_row = (
+                        cur.fetchone()
+                    )
+
+                    if not return_check_row:
+                        raise RuntimeError(
+                            (
+                                "Could not retrieve "
+                                "return check ID."
+                            )
+                        )
+
+                    return_check_id = (
+                        return_check_row["id"]
+                    )
+
+                    # -----------------------------------------
                     # Record return event
-                    # -------------------------------------------------
+                    # -----------------------------------------
 
                     cur.execute(
                         """
@@ -2533,9 +2668,75 @@ def complete_booking_return(
                         ),
                     )
 
-                    # -------------------------------------------------
+                    # -----------------------------------------
+                    # Create Sample Issue when required
+                    # -----------------------------------------
+
+                    if return_status in {
+                        "Damaged",
+                        "Incomplete",
+                        "Not Returned",
+                    }:
+
+                        cur.execute(
+                            """
+                            SELECT id
+                            FROM sample_issues
+                            WHERE return_check_id = %s
+                              AND issue_status NOT IN (
+                                  'Resolved',
+                                  'Retired',
+                                  'Converted to Refurbished'
+                              )
+                            LIMIT 1;
+                            """,
+                            (
+                                return_check_id,
+                            ),
+                        )
+
+                        existing_issue = (
+                            cur.fetchone()
+                        )
+
+                        if not existing_issue:
+
+                            cur.execute(
+                                """
+                                INSERT INTO sample_issues (
+                                    sample_record_id,
+                                    booking_group_id,
+                                    return_check_id,
+                                    issue_type,
+                                    issue_status,
+                                    description,
+                                    reported_by,
+                                    reported_at
+                                )
+                                VALUES (
+                                    %s,
+                                    %s,
+                                    %s,
+                                    %s,
+                                    'Open',
+                                    %s,
+                                    %s,
+                                    NOW()
+                                );
+                                """,
+                                (
+                                    sample_record_id,
+                                    booking_group_id,
+                                    return_check_id,
+                                    return_status,
+                                    clean_notes,
+                                    checked_by,
+                                ),
+                            )
+
+                    # -----------------------------------------
                     # Update physical sample
-                    # -------------------------------------------------
+                    # -----------------------------------------
 
                     cur.execute(
                         """
@@ -2543,19 +2744,21 @@ def complete_booking_return(
                         SET
                             condition = %s,
                             asset_state = %s,
+                            current_location_id = %s,
                             updated_at = NOW()
                         WHERE id = %s;
                         """,
                         (
                             new_condition,
                             new_asset_state,
+                            new_location_id,
                             sample_record_id,
                         ),
                     )
 
-                    # -------------------------------------------------
+                    # -----------------------------------------
                     # Complete booking item
-                    # -------------------------------------------------
+                    # -----------------------------------------
 
                     cur.execute(
                         """
@@ -2570,9 +2773,9 @@ def complete_booking_return(
                         ),
                     )
 
-                    # -------------------------------------------------
-                    # Booking completion event
-                    # -------------------------------------------------
+                    # -----------------------------------------
+                    # Record booking completion event
+                    # -----------------------------------------
 
                     cur.execute(
                         """
@@ -2600,9 +2803,9 @@ def complete_booking_return(
                         ),
                     )
 
-                # -------------------------------------------------
+                # -----------------------------------------
                 # Complete booking group
-                # -------------------------------------------------
+                # -----------------------------------------
 
                 cur.execute(
                     """
@@ -2620,7 +2823,6 @@ def complete_booking_return(
             conn.commit()
 
         except Exception:
-
             conn.rollback()
             raise
 
@@ -2633,3 +2835,179 @@ def complete_booking_return(
             booking_items
         ),
     }
+
+
+def get_sample_issues(
+    *,
+    include_closed=False,
+):
+    """
+    Return sample issues with sample and booking details.
+
+    By default, only issues that still require attention
+    are returned.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            where_clause = ""
+
+            if not include_closed:
+                where_clause = """
+                    WHERE si.issue_status NOT IN (
+                        'Resolved',
+                        'Retired',
+                        'Converted to Refurbished'
+                    )
+                """
+
+            cur.execute(
+                f"""
+                SELECT
+                    si.id AS issue_id,
+                    si.sample_record_id,
+                    si.booking_group_id,
+                    si.return_check_id,
+                    si.issue_type,
+                    si.issue_status,
+                    si.description,
+                    si.reported_by,
+                    si.reported_at,
+                    si.assigned_to,
+                    si.resolution_action,
+                    si.resolution_notes,
+                    si.resolved_by,
+                    si.resolved_at,
+
+                    sm.sample_id,
+                    sm.sample_name,
+                    sm.condition,
+                    sm.asset_state,
+
+                    st.code AS sample_type_code,
+                    st.name AS sample_type_name,
+
+                    sl.code AS location_code,
+                    sl.name AS location_name,
+
+                    sbg.booking_number
+
+                FROM sample_issues si
+
+                JOIN sample_master sm
+                    ON sm.id = si.sample_record_id
+
+                JOIN sample_types st
+                    ON st.id = sm.sample_type_id
+
+                LEFT JOIN sample_locations sl
+                    ON sl.id = sm.current_location_id
+
+                LEFT JOIN sample_booking_groups sbg
+                    ON sbg.id = si.booking_group_id
+
+                {where_clause}
+
+                ORDER BY
+                    si.reported_at DESC,
+                    sm.sample_name;
+                """
+            )
+
+            return cur.fetchall()
+
+
+# -----------------------------------------
+# Sample Issue Details
+# -----------------------------------------
+
+def get_sample_issue_details(issue_id):
+    """
+    Return the full detail for one sample issue.
+
+    Includes:
+    - issue information
+    - sample information
+    - sample type
+    - current location
+    - booking information
+    - return-check information
+    """
+
+    if not issue_id:
+        return None
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    si.id AS issue_id,
+                    si.sample_record_id,
+                    si.booking_group_id,
+                    si.return_check_id,
+                    si.issue_type,
+                    si.issue_status,
+                    si.description,
+                    si.reported_by,
+                    si.reported_at,
+                    si.assigned_to,
+                    si.resolution_action,
+                    si.resolution_notes,
+                    si.resolved_by,
+                    si.resolved_at,
+
+                    sm.sample_id,
+                    sm.sample_name,
+                    sm.condition,
+                    sm.asset_state,
+                    sm.current_holder,
+                    sm.current_holder_team,
+                    sm.received_date,
+                    sm.notes AS sample_notes,
+
+                    st.code AS sample_type_code,
+                    st.name AS sample_type_name,
+
+                    sl.code AS location_code,
+                    sl.name AS location_name,
+
+                    sbg.booking_number,
+                    sbg.booked_by,
+                    sbg.team AS booking_team,
+                    sbg.purpose AS booking_purpose,
+                    sbg.start_date AS booking_start_date,
+                    sbg.end_date AS booking_end_date,
+
+                    src.return_status,
+                    src.condition_on_return,
+                    src.notes AS return_notes,
+                    src.checked_by,
+                    src.checked_at
+
+                FROM sample_issues si
+
+                JOIN sample_master sm
+                    ON sm.id = si.sample_record_id
+
+                LEFT JOIN sample_types st
+                    ON st.id = sm.sample_type_id
+
+                LEFT JOIN sample_locations sl
+                    ON sl.id = sm.current_location_id
+
+                LEFT JOIN sample_booking_groups sbg
+                    ON sbg.id = si.booking_group_id
+
+                LEFT JOIN sample_return_checks src
+                    ON src.id = si.return_check_id
+
+                WHERE si.id = %s
+
+                LIMIT 1;
+                """,
+                (issue_id,),
+            )
+
+            return cur.fetchone()

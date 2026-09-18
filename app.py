@@ -33,6 +33,18 @@ from pages_ui.sample_return import (
     render_sample_return_page,
 )
 
+from pages_ui.sample_issues import (
+    render_sample_issues_page,
+)
+
+from pages_ui.sample_issue_detail import (
+    render_sample_issue_detail_page,
+)
+
+from pages_ui.master_file_release_control import (
+    render_master_file_release_control_page,
+)
+
 from utils.qr import build_sample_qr
 from utils.tag import build_warehouse_tag
 
@@ -152,6 +164,7 @@ def reset_sample_intake_form():
     for key in keys:
         st.session_state.pop(key, None)
 
+# Sidebar
 with st.sidebar:
     st.markdown("## ◈ NexaFlow")
     st.caption("Asset Tracking & Operational Visibility")
@@ -164,9 +177,11 @@ with st.sidebar:
             "Sample Search",
             "Sample Detail",
             "Sample Intake",
-            "Bookings & Returns",
             "Book Samples",
+            "Bookings & Returns",
+            "Sample Issues",
             "QR Action Hub",
+            "Master Files",
         ],
         label_visibility="collapsed",
         key="page",
@@ -689,6 +704,15 @@ elif page == "Bookings & Returns":
 
 elif page == "Sample Return":
     render_sample_return_page(hero)
+
+elif page == "Sample Issues":
+    render_sample_issues_page(hero)
+
+elif page == "Sample Issue Detail":
+    render_sample_issue_detail_page(hero)
+
+elif page == "Master Files":
+    render_master_file_release_control_page()
 
 elif page == "QR Action Hub":
     hero(
