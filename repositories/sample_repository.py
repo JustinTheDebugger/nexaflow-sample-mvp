@@ -3609,6 +3609,7 @@ def complete_sample_repair(
     completion_notes,
     final_disposition,
     return_location_id=None,
+    condition_grade=None,
 ):
     """
     Complete a sample repair and apply the final disposition.
@@ -3638,6 +3639,15 @@ def complete_sample_repair(
     if final_disposition not in allowed_dispositions:
         raise ValueError(
             "Invalid final disposition."
+        )
+    
+    if (
+        final_disposition == "Convert to Refurbished"
+        and condition_grade not in {"A", "B", "C"}
+    ):
+        raise ValueError(
+            "Refurbished condition grade "
+            "must be A, B, or C."
         )
 
     if (
@@ -3860,8 +3870,168 @@ def complete_sample_repair(
                     == "Convert to Refurbished"
                 ):
 
-                    # Temporary behaviour until the
-                    # refurbished_items module is added.
+                    # -----------------------------------------
+                    # Get Refurbished Stock location
+                    # -----------------------------------------
+
+                    cur.execute(
+                        """
+                        SELECT
+                            id,
+                            code,
+                            name
+                        FROM sample_locations
+                        WHERE code = 'R1'
+                        AND active = TRUE
+                        LIMIT 1;
+                        """
+                    )
+
+                    refurbished_location = cur.fetchone()
+
+                    if not refurbished_location:
+                        raise ValueError(
+                            "Refurbished Stock Area (R1) "
+                            "could not be found."
+                        )
+
+                    refurbished_location_id = (
+                        refurbished_location["id"]
+                    )
+
+                    # -----------------------------------------
+                    # Prevent duplicate conversion
+                    # -----------------------------------------
+
+                    cur.execute(
+                        """
+                        SELECT
+                            refurbished_id
+                        FROM refurbished_items
+                        WHERE source_sample_record_id = %s
+                        LIMIT 1;
+                        """,
+                        (
+                            issue["sample_record_id"],
+                        ),
+                    )
+
+                    existing_refurbished = cur.fetchone()
+
+                    if existing_refurbished:
+                        raise ValueError(
+                            (
+                                "This sample has already been "
+                                "converted to refurbished item "
+                                f"{existing_refurbished['refurbished_id']}."
+                            )
+                        )
+
+                    # -----------------------------------------
+                    # Lock refurbished ID counter
+                    # -----------------------------------------
+
+                    cur.execute(
+                        """
+                        SELECT
+                            id,
+                            last_number
+                        FROM refurbished_id_counters
+                        ORDER BY id
+                        LIMIT 1
+                        FOR UPDATE;
+                        """
+                    )
+
+                    counter = cur.fetchone()
+
+                    if not counter:
+                        raise RuntimeError(
+                            "Refurbished ID counter "
+                            "could not be found."
+                        )
+
+                    next_number = (
+                        counter["last_number"] + 1
+                    )
+
+                    refurbished_id = (
+                        f"REF-{next_number:05d}"
+                    )
+
+                    # -----------------------------------------
+                    # Update counter
+                    # -----------------------------------------
+
+                    cur.execute(
+                        """
+                        UPDATE refurbished_id_counters
+                        SET
+                            last_number = %s,
+                            updated_at = NOW()
+                        WHERE id = %s;
+                        """,
+                        (
+                            next_number,
+                            counter["id"],
+                        ),
+                    )
+
+                    # -----------------------------------------
+                    # Create refurbished inventory item
+                    # -----------------------------------------
+
+                    cur.execute(
+                        """
+                        INSERT INTO refurbished_items (
+                            refurbished_id,
+                            source_sample_record_id,
+                            condition_grade,
+                            refurbished_status,
+                            location_id,
+                            conversion_notes,
+                            converted_by,
+                            converted_at
+                        )
+                        VALUES (
+                            %s,
+                            %s,
+                            %s,
+                            'Available',
+                            %s,
+                            %s,
+                            %s,
+                            NOW()
+                        )
+                        RETURNING
+                            id,
+                            converted_at;
+                        """,
+                        (
+                            refurbished_id,
+                            issue["sample_record_id"],
+                            condition_grade,
+                            refurbished_location_id,
+                            completion_notes,
+                            completed_by,
+                        ),
+                    )
+
+                    refurbished_row = cur.fetchone()
+
+                    converted_date = (
+                        refurbished_row["converted_at"]
+                        .strftime("%d %b %Y")
+                    )
+
+                    if not refurbished_row:
+                        raise RuntimeError(
+                            "Could not create refurbished item."
+                        )
+
+                    # -----------------------------------------
+                    # Remove original record from sample pool
+                    # -----------------------------------------
 
                     cur.execute(
                         """
@@ -3890,38 +4060,12 @@ def complete_sample_repair(
                     )
 
                     event_title = (
-                        "Converted to Refurbished"
+                        f"Converted to {refurbished_id}"
                     )
 
-                    new_location_id = None
-
-                else:
-
-                    cur.execute(
-                        """
-                        UPDATE sample_master
-                        SET
-                            asset_state = 'Retired',
-                            current_location_id = NULL,
-                            updated_at = NOW()
-                        WHERE id = %s;
-                        """,
-                        (
-                            issue["sample_record_id"],
-                        ),
-                    )
-
-                    issue_status = "Retired"
-                    resolution_action = "Retire"
-
-                    event_type = (
-                        "SAMPLE_RETIRED"
-                    )
-
-                    event_title = (
-                        "Sample Retired"
-                    )
-
+                    # The sample itself leaves sample_locations.
+                    # Its physical successor is now tracked by
+                    # refurbished_items at R1.
                     new_location_id = None
 
                 # -----------------------------------------
@@ -3953,6 +4097,20 @@ def complete_sample_repair(
                 # Record lifecycle event
                 # -----------------------------------------
 
+                event_details = completion_notes
+
+                if (
+                    final_disposition
+                    == "Convert to Refurbished"
+                ):
+                    event_details = (
+                        f"{completion_notes} "
+                        f"Created refurbished inventory item "
+                        f"{refurbished_id}, Grade "
+                        f"{condition_grade}, on "
+                        f"{converted_date}."
+                    )
+
                 cur.execute(
                     """
                     INSERT INTO sample_events (
@@ -3982,7 +4140,7 @@ def complete_sample_repair(
                         issue["sample_record_id"],
                         event_type,
                         event_title,
-                        completion_notes,
+                        event_details,
                         completed_by,
                         previous_location_id,
                         new_location_id,
@@ -4001,3 +4159,184 @@ def complete_sample_repair(
         "issue_status": issue_status,
         "final_disposition": final_disposition,
     }
+
+# -----------------------------------------
+# Get Refurbished Items
+# -----------------------------------------
+def get_refurbished_items(
+    *,
+    status=None,
+):
+    """
+    Return refurbished inventory items with
+    source sample and current location details.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            sql = """
+                SELECT
+                    ri.id,
+                    ri.refurbished_id,
+                    ri.source_sample_record_id,
+                    ri.product_id,
+                    ri.condition_grade,
+                    ri.refurbished_status,
+                    ri.location_id,
+                    ri.conversion_notes,
+                    ri.converted_by,
+                    ri.converted_at,
+                    ri.sale_price,
+                    ri.reserved_at,
+                    ri.sold_at,
+
+                    sm.sample_id
+                        AS source_sample_id,
+
+                    sm.sample_name
+                        AS source_sample_name,
+
+                    sl.code
+                        AS location_code,
+
+                    sl.name
+                        AS location_name
+
+                FROM refurbished_items ri
+
+                JOIN sample_master sm
+                    ON sm.id =
+                       ri.source_sample_record_id
+
+                LEFT JOIN sample_locations sl
+                    ON sl.id =
+                       ri.location_id
+            """
+
+            params = []
+
+            if status:
+                sql += """
+                    WHERE
+                        ri.refurbished_status = %s
+                """
+
+                params.append(status)
+
+            sql += """
+                ORDER BY
+                    ri.converted_at DESC;
+            """
+
+            cur.execute(
+                sql,
+                params,
+            )
+
+            return cur.fetchall()
+        
+# -----------------------------------------
+# Get Refurbished Item
+# -----------------------------------------
+def get_refurbished_item(
+    refurbished_item_id,
+):
+    """
+    Return one refurbished item with its
+    source sample, issue, repair and location.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                SELECT
+                    ri.id,
+                    ri.refurbished_id,
+                    ri.source_sample_record_id,
+                    ri.product_id,
+                    ri.condition_grade,
+                    ri.refurbished_status,
+                    ri.location_id,
+                    ri.conversion_notes,
+                    ri.converted_by,
+                    ri.converted_at,
+                    ri.sale_price,
+                    ri.reserved_at,
+                    ri.sold_at,
+
+                    sm.sample_id
+                        AS source_sample_id,
+
+                    sm.sample_name
+                        AS source_sample_name,
+
+                    sl.code
+                        AS location_code,
+
+                    sl.name
+                        AS location_name,
+
+                    si.id
+                        AS issue_id,
+
+                    si.issue_type,
+
+                    si.description
+                        AS issue_description,
+
+                    si.resolution_notes,
+
+                    sr.id
+                        AS repair_id,
+
+                    sr.repair_notes,
+
+                    sr.completion_notes
+                        AS repair_completion_notes,
+
+                    sr.repair_started_by,
+
+                    sr.repair_started_at,
+
+                    sr.repair_completed_by,
+
+                    sr.repair_completed_at
+
+                FROM refurbished_items ri
+
+                JOIN sample_master sm
+                    ON sm.id =
+                       ri.source_sample_record_id
+
+                LEFT JOIN sample_locations sl
+                    ON sl.id =
+                       ri.location_id
+
+                LEFT JOIN sample_issues si
+                    ON si.sample_record_id =
+                       ri.source_sample_record_id
+                    AND si.issue_status =
+                        'Converted to Refurbished'
+
+                LEFT JOIN sample_repairs sr
+                    ON sr.issue_id = si.id
+                    AND sr.final_disposition =
+                        'Convert to Refurbished'
+
+                WHERE ri.id = %s
+
+                ORDER BY
+                    si.resolved_at DESC,
+                    sr.repair_completed_at DESC
+
+                LIMIT 1;
+                """,
+                (
+                    refurbished_item_id,
+                ),
+            )
+
+            return cur.fetchone()

@@ -366,6 +366,8 @@ def render_sample_issue_detail_page(hero):
     st.divider()
     st.subheader("Resolution")
 
+ 
+
     if (
         issue["issue_type"] == "Damaged"
         and issue["issue_status"] == "Open"
@@ -631,6 +633,7 @@ def render_sample_issue_detail_page(hero):
             )
 
             return_location_id = None
+            condition_grade = None
 
             #
             # Return to sample pool
@@ -707,11 +710,24 @@ def render_sample_issue_detail_page(hero):
                 == "Convert to Refurbished"
             ):
 
-                st.warning(
-                    "The sample will leave the active "
-                    "sample pool. Its history will be "
-                    "preserved for the future "
-                    "Refurbished Items workflow."
+                condition_grade = st.selectbox(
+                    "Refurbished grade",
+                    options=[
+                        "A",
+                        "B",
+                        "C",
+                    ],
+                    key=(
+                        "repair_refurbished_grade_"
+                        f"{issue['issue_id']}"
+                    ),
+                )
+
+                st.info(
+                    "The sample will leave the sample pool "
+                    "and a new refurbished inventory item "
+                    "will be created in R1 — Refurbished "
+                    "Stock Area."
                 )
 
             #
@@ -773,18 +789,13 @@ def render_sample_issue_detail_page(hero):
 
                 else:
                     try:
-                        complete_sample_repair(
+                        result = complete_sample_repair(
                             issue_id=issue["issue_id"],
                             completed_by=completed_by,
-                            completion_notes=(
-                                completion_notes
-                            ),
-                            final_disposition=(
-                                final_disposition
-                            ),
-                            return_location_id=(
-                                return_location_id
-                            ),
+                            completion_notes=completion_notes,
+                            final_disposition=final_disposition,
+                            return_location_id=return_location_id,
+                            condition_grade=condition_grade,
                         )
 
                         st.success(

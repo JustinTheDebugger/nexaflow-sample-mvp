@@ -45,6 +45,14 @@ from pages_ui.master_file_release_control import (
     render_master_file_release_control_page,
 )
 
+from pages_ui.refurbished_items import (
+    render_refurbished_items_page,
+)
+
+from pages_ui.refurbished_item_detail import (
+    render_refurbished_item_detail_page,
+)
+
 from utils.qr import build_sample_qr
 from utils.tag import build_warehouse_tag
 
@@ -180,6 +188,7 @@ with st.sidebar:
             "Book Samples",
             "Bookings & Returns",
             "Sample Issues",
+            "Refurbished Items",
             "QR Action Hub",
             "Master Files",
         ],
@@ -213,6 +222,11 @@ with st.sidebar:
             None,
         )
 
+        st.session_state.pop(
+            "selected_refurbished_item_id",
+            None,
+        )
+
     st.session_state[
         "_last_sidebar_page"
     ] = selected_page
@@ -234,6 +248,30 @@ with st.sidebar:
 
 samples, bookings, timeline = frames()
 
+st.markdown(
+    """
+    <style>
+
+    /* other NexaFlow CSS */
+
+    .hero h1 {
+        color: #17365d !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    .hero p {
+        color: #64748b !important;
+        margin: 0.35rem 0 0 0 !important;
+        padding: 0 !important;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Render Route Page
 if page == "Executive Dashboard":
     hero(
         "Executive Asset Dashboard",
@@ -746,6 +784,12 @@ elif page == "Sample Issues":
 
 elif page == "Sample Issue Detail":
     render_sample_issue_detail_page(hero)
+
+elif page == "Refurbished Items":
+    render_refurbished_items_page(hero)
+
+elif page == "Refurbished Item Detail":
+    render_refurbished_item_detail_page(hero)
 
 elif page == "Master Files":
     render_master_file_release_control_page()
