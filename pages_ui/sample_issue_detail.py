@@ -1,8 +1,16 @@
 import streamlit as st
 
+from pathlib import Path
+
+from utils.sample_media import (
+    delete_sample_media_file,
+    save_sample_media_file,
+)
+
 from repositories.sample_repository import (
     add_sample_issue_media,
     complete_sample_repair,
+    delete_sample_media,
     get_sample_issue_details,
     get_sample_issue_media,
     get_sample_issue_repair,
@@ -10,6 +18,8 @@ from repositories.sample_repository import (
     get_issue_previous_location,
     retire_sample_from_issue,
     start_sample_repair,
+    add_sample_after_repair_media,
+    get_sample_after_repair_media,
 )
 
 
@@ -44,9 +54,70 @@ def _format_date(value):
 
 def render_sample_issue_detail_page(hero):
 
+    issue_id = st.session_state.get(
+        "selected_sample_issue_id"
+    )
+
+    if not issue_id:
+        st.warning(
+            "No sample issue has been selected."
+        )
+
+        if st.button("Back to Sample Issues"):
+            st.session_state.pop(
+                "workflow_page",
+                None,
+            )
+            st.rerun()
+
+        return
+
+    issue = get_sample_issue_details(
+        issue_id
+    )
+
+    if not issue:
+        st.error(
+            "The selected sample issue could not be found."
+        )
+
+        if st.button("Back to Sample Issues"):
+            st.session_state.pop(
+                "selected_sample_issue_id",
+                None,
+            )
+            st.session_state.pop(
+                "workflow_page",
+                None,
+            )
+            st.rerun()
+
+        return
+
+    # ------------------------------------------------------------------
+    # Load issue media
+    # ------------------------------------------------------------------
+
+    issue_media = get_sample_issue_media(
+        issue["issue_id"]
+    )
+
+    damage_photos = [
+        media
+        for media in issue_media
+        if media["media_type"] == "Damage"
+    ]
+
+    after_repair_photos = (
+        get_sample_after_repair_media(
+            issue["issue_id"]
+        )
+    )
+
+    # Continue with existing page...
     hero(
         "Sample Issue Detail",
-        "Review the issue, evidence, and resolution progress.",
+        "Review the issue and manage its resolution.",
     )
 
     st.markdown(
@@ -328,32 +399,292 @@ def render_sample_issue_detail_page(hero):
                 )
             )
 
-    #
-    # Evidence placeholder
-    #
+    
+
+
+        # ------------------------------------------------------------------
+    # Damage evidence
+    # ------------------------------------------------------------------
 
     st.divider()
-    st.subheader("Damage Evidence")
 
     if issue["issue_type"] == "Damaged":
-        st.info(
-            "No damage photos have been added yet."
+
+        st.subheader("Damage Evidence")
+
+        st.caption(
+            "Photos showing the condition of the sample "
+            "when the issue was reported."
         )
 
-        st.button(
-            "Add Photos",
-            disabled=True,
-            help=(
-                "Photo upload will be added "
-                "in the next step."
-            ),
-        )
+        # --------------------------------------------------------------
+        # Existing damage photos
+        # --------------------------------------------------------------
+
+        if damage_photos:
+
+            columns = st.columns(3)
+
+            for index, photo in enumerate(
+                damage_photos
+            ):
+                with columns[index % 3]:
+
+                    storage_path = photo[
+                        "storage_path"
+                    ]
+
+                    if (
+                        storage_path
+                        and Path(storage_path).exists()
+                    ):
+                        st.image(
+                            storage_path,
+                            width="stretch",
+                        )
+
+                        if photo["caption"]:
+                            st.caption(
+                                photo["caption"]
+                            )
+
+                        if photo["uploaded_by"]:
+                            st.caption(
+                                "Uploaded by "
+                                f"{photo['uploaded_by']}"
+                            )
+
+                        if st.button(
+                            "Remove",
+                            key=(
+                                "remove_media_"
+                                f"{photo['id']}"
+                            ),
+                        ):
+                            st.session_state[
+                                "pending_delete_media_id"
+                            ] = photo["id"]
+
+                            st.rerun()
+
+                    else:
+                        st.warning(
+                            "Image file could not "
+                            "be found."
+                        )
+
+            # ----------------------------------------------------------
+            # Delete confirmation
+            # Full-width area below the gallery
+            # ----------------------------------------------------------
+
+            pending_media_id = (
+                st.session_state.get(
+                    "pending_delete_media_id"
+                )
+            )
+
+            if pending_media_id:
+
+                pending_photo = next(
+                    (
+                        photo
+                        for photo in damage_photos
+                        if photo["id"]
+                        == pending_media_id
+                    ),
+                    None,
+                )
+
+                if pending_photo:
+
+                    st.warning(
+                        "Remove this photo permanently? "
+                        "This action cannot be undone."
+                    )
+
+                    confirm_col, cancel_col, spacer = (
+                        st.columns(
+                            [1, 1, 4]
+                        )
+                    )
+
+                    with confirm_col:
+                        if st.button(
+                            "Remove Photo",
+                            type="primary",
+                            key=(
+                                "confirm_remove_"
+                                f"{pending_photo['id']}"
+                            ),
+                        ):
+                            try:
+                                deleted_path = (
+                                    delete_sample_media(
+                                        pending_photo["id"]
+                                    )
+                                )
+
+                                delete_sample_media_file(
+                                    deleted_path
+                                )
+
+                                st.session_state.pop(
+                                    "pending_delete_media_id",
+                                    None,
+                                )
+
+                                st.rerun()
+
+                            except Exception as exc:
+                                st.error(
+                                    "Could not remove "
+                                    f"photo: {exc}"
+                                )
+
+                    with cancel_col:
+                        if st.button(
+                            "Cancel",
+                            key=(
+                                "cancel_remove_"
+                                f"{pending_photo['id']}"
+                            ),
+                        ):
+                            st.session_state.pop(
+                                "pending_delete_media_id",
+                                None,
+                            )
+
+                            st.rerun()
+
+        else:
+            st.info(
+                "No damage photos have been recorded."
+            )
+
+        # --------------------------------------------------------------
+        # Upload damage photos
+        # --------------------------------------------------------------
+
+        with st.expander(
+            "Add Damage Photos"
+        ):
+
+            uploaded_files = st.file_uploader(
+                "Damage photos",
+                type=[
+                    "jpg",
+                    "jpeg",
+                    "png",
+                    "webp",
+                ],
+                accept_multiple_files=True,
+                key=(
+                    "damage_photos_"
+                    f"{issue['issue_id']}"
+                ),
+            )
+
+            photo_caption = st.text_input(
+                "Caption",
+                placeholder=(
+                    "e.g. Crack at lower "
+                    "rear pole joint"
+                ),
+                key=(
+                    "damage_caption_"
+                    f"{issue['issue_id']}"
+                ),
+            )
+
+            photo_uploaded_by = st.text_input(
+                "Uploaded by",
+                key=(
+                    "damage_uploaded_by_"
+                    f"{issue['issue_id']}"
+                ),
+            )
+
+            if st.button(
+                "Upload Photos",
+                type="primary",
+                key=(
+                    "upload_damage_"
+                    f"{issue['issue_id']}"
+                ),
+            ):
+
+                if not uploaded_files:
+                    st.warning(
+                        "Select at least one photo."
+                    )
+
+                elif not photo_uploaded_by.strip():
+                    st.warning(
+                        "Uploaded by is required."
+                    )
+
+                else:
+                    try:
+
+                        for uploaded_file in (
+                            uploaded_files
+                        ):
+
+                            storage_path = (
+                                save_sample_media_file(
+                                    uploaded_file,
+                                    issue["issue_id"],
+                                )
+                            )
+
+                            add_sample_issue_media(
+                                sample_record_id=(
+                                    issue[
+                                        "sample_record_id"
+                                    ]
+                                ),
+                                issue_id=(
+                                    issue["issue_id"]
+                                ),
+                                storage_path=(
+                                    storage_path
+                                ),
+                                file_name=(
+                                    uploaded_file.name
+                                ),
+                                mime_type=(
+                                    uploaded_file.type
+                                ),
+                                caption=(
+                                    photo_caption.strip()
+                                    if photo_caption.strip()
+                                    else None
+                                ),
+                                uploaded_by=(
+                                    photo_uploaded_by.strip()
+                                ),
+                            )
+
+                        st.success(
+                            "Damage photos uploaded."
+                        )
+
+                        st.rerun()
+
+                    except Exception as exc:
+                        st.error(
+                            "Could not upload "
+                            f"photos: {exc}"
+                        )
 
     else:
         st.caption(
             "Photo evidence is not required "
             "for this issue."
         )
+
+
 
     #
     # Action placeholder
@@ -589,6 +920,283 @@ def render_sample_issue_detail_page(hero):
                 st.write(
                     repair["repair_notes"]
                 )
+
+
+            # --------------------------------------------------------------
+            # After repair evidence
+            # --------------------------------------------------------------
+
+            st.divider()
+            st.subheader("After Repair Evidence")
+
+            st.caption(
+                "Record the completed repair and upload photos "
+                "showing the condition after repair."
+            )
+
+            # --------------------------------------------------------------
+            # Existing after-repair photos
+            # --------------------------------------------------------------
+
+            if after_repair_photos:
+
+                columns = st.columns(3)
+
+                for index, photo in enumerate(
+                    after_repair_photos
+                ):
+                    with columns[index % 3]:
+
+                        storage_path = photo[
+                            "storage_path"
+                        ]
+
+                        if (
+                            storage_path
+                            and Path(storage_path).exists()
+                        ):
+                            st.image(
+                                storage_path,
+                                width="stretch",
+                            )
+
+                            if photo["caption"]:
+                                st.caption(
+                                    photo["caption"]
+                                )
+
+                            if photo["uploaded_by"]:
+                                st.caption(
+                                    "Uploaded by "
+                                    f"{photo['uploaded_by']}"
+                                )
+
+                            if st.button(
+                                "Remove",
+                                key=(
+                                    "remove_after_repair_"
+                                    f"{photo['id']}"
+                                ),
+                            ):
+                                st.session_state[
+                                    "pending_delete_after_repair_id"
+                                ] = photo["id"]
+
+                                st.rerun()
+
+                        else:
+                            st.warning(
+                                "Image file could not be found."
+                            )
+
+                # ----------------------------------------------------------
+                # Delete confirmation
+                # ----------------------------------------------------------
+
+                pending_media_id = (
+                    st.session_state.get(
+                        "pending_delete_after_repair_id"
+                    )
+                )
+
+                if pending_media_id:
+
+                    pending_photo = next(
+                        (
+                            photo
+                            for photo in after_repair_photos
+                            if photo["id"]
+                            == pending_media_id
+                        ),
+                        None,
+                    )
+
+                    if pending_photo:
+
+                        st.warning(
+                            "Remove this after-repair photo permanently? "
+                            "This action cannot be undone."
+                        )
+
+                        confirm_col, cancel_col, spacer = (
+                            st.columns([1, 1, 4])
+                        )
+
+                        with confirm_col:
+
+                            if st.button(
+                                "Remove Photo",
+                                type="primary",
+                                key=(
+                                    "confirm_after_repair_"
+                                    f"{pending_photo['id']}"
+                                ),
+                            ):
+                                try:
+
+                                    deleted_path = (
+                                        delete_sample_media(
+                                            pending_photo["id"]
+                                        )
+                                    )
+
+                                    delete_sample_media_file(
+                                        deleted_path
+                                    )
+
+                                    st.session_state.pop(
+                                        "pending_delete_after_repair_id",
+                                        None,
+                                    )
+
+                                    st.rerun()
+
+                                except Exception as exc:
+                                    st.error(
+                                        "Could not remove photo: "
+                                        f"{exc}"
+                                    )
+
+                        with cancel_col:
+
+                            if st.button(
+                                "Cancel",
+                                key=(
+                                    "cancel_after_repair_"
+                                    f"{pending_photo['id']}"
+                                ),
+                            ):
+                                st.session_state.pop(
+                                    "pending_delete_after_repair_id",
+                                    None,
+                                )
+
+                                st.rerun()
+
+            else:
+                st.info(
+                    "No after-repair photos have been recorded."
+                )
+
+            # --------------------------------------------------------------
+            # Upload after-repair photos
+            # --------------------------------------------------------------
+
+            with st.expander(
+                "Add After Repair Photos"
+            ):
+
+                repair_files = st.file_uploader(
+                    "After repair photos",
+                    type=[
+                        "jpg",
+                        "jpeg",
+                        "png",
+                        "webp",
+                    ],
+                    accept_multiple_files=True,
+                    key=(
+                        "after_repair_photos_"
+                        f"{issue['issue_id']}"
+                    ),
+                )
+
+                repair_photo_caption = st.text_input(
+                    "Caption",
+                    placeholder=(
+                        "e.g. New rear pole section installed"
+                    ),
+                    key=(
+                        "after_repair_caption_"
+                        f"{issue['issue_id']}"
+                    ),
+                )
+
+                repair_photo_uploaded_by = (
+                    st.text_input(
+                        "Uploaded by",
+                        key=(
+                            "after_repair_uploaded_by_"
+                            f"{issue['issue_id']}"
+                        ),
+                    )
+                )
+
+                if st.button(
+                    "Upload Photos",
+                    type="primary",
+                    key=(
+                        "upload_after_repair_"
+                        f"{issue['issue_id']}"
+                    ),
+                ):
+
+                    if not repair_files:
+                        st.warning(
+                            "Select at least one photo."
+                        )
+
+                    elif not (
+                        repair_photo_uploaded_by.strip()
+                    ):
+                        st.warning(
+                            "Uploaded by is required."
+                        )
+
+                    else:
+                        try:
+
+                            for uploaded_file in (
+                                repair_files
+                            ):
+
+                                storage_path = (
+                                    save_sample_media_file(
+                                        uploaded_file,
+                                        issue["issue_id"],
+                                    )
+                                )
+
+                                add_sample_after_repair_media(
+                                    sample_record_id=(
+                                        issue[
+                                            "sample_record_id"
+                                        ]
+                                    ),
+                                    issue_id=(
+                                        issue["issue_id"]
+                                    ),
+                                    storage_path=(
+                                        storage_path
+                                    ),
+                                    file_name=(
+                                        uploaded_file.name
+                                    ),
+                                    mime_type=(
+                                        uploaded_file.type
+                                    ),
+                                    caption=(
+                                        repair_photo_caption.strip()
+                                        if repair_photo_caption.strip()
+                                        else None
+                                    ),
+                                    uploaded_by=(
+                                        repair_photo_uploaded_by.strip()
+                                    ),
+                                )
+
+                            st.success(
+                                "After-repair photos uploaded."
+                            )
+
+                            st.rerun()
+
+                        except Exception as exc:
+                            st.error(
+                                "Could not upload photos: "
+                                f"{exc}"
+                            )
+
 
             st.divider()
 

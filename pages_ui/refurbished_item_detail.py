@@ -2,6 +2,7 @@ import streamlit as st
 
 from repositories.sample_repository import (
     get_refurbished_item,
+    get_refurbished_item_media,
 )
 
 def detail_field(
@@ -41,6 +42,14 @@ def render_refurbished_item_detail_page(hero):
 
     refurbished_item_id = st.session_state.get(
         "selected_refurbished_item_id"
+    )
+
+    item = get_refurbished_item(
+        refurbished_item_id
+    )
+
+    media = get_refurbished_item_media(
+        refurbished_item_id
     )
 
     if not refurbished_item_id:
@@ -376,6 +385,44 @@ def render_refurbished_item_detail_page(hero):
         st.info(
             "No linked repair record was found."
         )
+
+    st.divider()
+
+    # -----------------------------------------
+    # Refurbished Evidence
+    # -----------------------------------------
+
+    st.subheader("Refurbishment Evidence")
+
+    before_photos = [
+        photo
+        for photo in media
+        if photo["media_type"] == "Damage"
+    ]
+
+    repair_photos = [
+        photo
+        for photo in media
+        if photo["media_type"] == "Repair"
+    ]
+
+    after_photos = [
+        photo
+        for photo in media
+        if photo["media_type"] == "Condition"
+    ]
+
+    st.write(
+        f"Before repair: {len(before_photos)}"
+    )
+
+    st.write(
+        f"Repair evidence: {len(repair_photos)}"
+    )
+
+    st.write(
+        f"After repair: {len(after_photos)}"
+    )
 
     st.divider()
 

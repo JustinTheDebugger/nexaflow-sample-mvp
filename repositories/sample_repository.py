@@ -4340,3 +4340,357 @@ def get_refurbished_item(
             )
 
             return cur.fetchone()
+        
+
+# -----------------------------------------
+# Get Refurbished Item Media
+# -----------------------------------------
+def get_refurbished_item_media(
+    refurbished_item_id,
+):
+    """
+    Return before-repair, repair and
+    after-repair media for a refurbished item.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                SELECT
+                    sm.id,
+                    sm.sample_record_id,
+                    sm.issue_id,
+                    sm.refurbished_item_id,
+                    sm.media_type,
+                    sm.storage_provider,
+                    sm.storage_path,
+                    sm.original_filename,
+                    sm.caption,
+                    sm.customer_visible,
+                    sm.uploaded_by,
+                    sm.uploaded_at
+
+                FROM sample_media sm
+
+                JOIN refurbished_items ri
+                    ON ri.id = %s
+
+                WHERE (
+                    sm.refurbished_item_id = ri.id
+
+                    OR (
+                        sm.sample_record_id =
+                            ri.source_sample_record_id
+                        AND sm.issue_id IN (
+                            SELECT si.id
+                            FROM sample_issues si
+                            WHERE
+                                si.sample_record_id =
+                                    ri.source_sample_record_id
+                                AND si.issue_status =
+                                    'Converted to Refurbished'
+                        )
+                    )
+                )
+
+                ORDER BY
+                    sm.uploaded_at ASC;
+                """,
+                (
+                    refurbished_item_id,
+                ),
+            )
+
+            return cur.fetchall()
+        
+
+# ------------------------------------------------------------------
+# Sample issue media
+# ------------------------------------------------------------------
+
+def add_sample_issue_media(
+    *,
+    sample_record_id,
+    issue_id,
+    storage_path,
+    file_name,
+    mime_type=None,
+    caption=None,
+    uploaded_by=None,
+):
+    """
+    Create a media record for damage evidence attached
+    to a sample issue.
+    """
+
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+                # Confirm that the issue belongs to this sample.
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM sample_issues
+                    WHERE id = %s
+                      AND sample_record_id = %s;
+                    """,
+                    (
+                        issue_id,
+                        sample_record_id,
+                    ),
+                )
+
+                if not cur.fetchone():
+                    raise ValueError(
+                        "Sample issue could not be found."
+                    )
+
+                cur.execute(
+                    """
+                    INSERT INTO sample_media (
+                        sample_record_id,
+                        issue_id,
+                        media_type,
+                        storage_path,
+                        file_name,
+                        mime_type,
+                        caption,
+                        uploaded_by,
+                        storage_provider,
+                        original_filename,
+                        uploaded_at
+                    )
+                    VALUES (
+                        %s,
+                        %s,
+                        'Damage',
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        'local',
+                        %s,
+                        NOW()
+                    )
+                    RETURNING id;
+                    """,
+                    (
+                        sample_record_id,
+                        issue_id,
+                        storage_path,
+                        file_name,
+                        mime_type,
+                        caption,
+                        uploaded_by,
+                        file_name,
+                    ),
+                )
+
+                media = cur.fetchone()
+
+            conn.commit()
+            return media["id"]
+
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def get_sample_issue_media(issue_id):
+    """
+    Return media attached to a sample issue.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    sample_record_id,
+                    issue_id,
+                    media_type,
+                    storage_path,
+                    file_name,
+                    mime_type,
+                    caption,
+                    uploaded_by,
+                    uploaded_at,
+                    customer_visible
+                FROM sample_media
+                WHERE issue_id = %s
+                ORDER BY uploaded_at ASC,
+                         created_at ASC;
+                """,
+                (issue_id,),
+            )
+
+            return cur.fetchall()
+        
+# ------------------------------------------------------------------
+# Delete sample media
+# ------------------------------------------------------------------
+
+def delete_sample_media(media_id):
+    """
+    Delete a sample media database record.
+
+    Returns the storage path so the caller can
+    remove the corresponding local file.
+    """
+
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    DELETE FROM sample_media
+                    WHERE id = %s
+                    RETURNING storage_path;
+                    """,
+                    (media_id,),
+                )
+
+                deleted = cur.fetchone()
+
+                if not deleted:
+                    raise ValueError(
+                        "Media record could not be found."
+                    )
+
+            conn.commit()
+
+            return deleted["storage_path"]
+
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def add_sample_after_repair_media(
+    *,
+    sample_record_id,
+    issue_id,
+    storage_path,
+    file_name,
+    mime_type=None,
+    caption=None,
+    uploaded_by=None,
+):
+    """
+    Create an after-repair condition photo for a sample issue.
+    """
+
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM sample_issues
+                    WHERE id = %s
+                      AND sample_record_id = %s;
+                    """,
+                    (
+                        issue_id,
+                        sample_record_id,
+                    ),
+                )
+
+                if not cur.fetchone():
+                    raise ValueError(
+                        "Sample issue could not be found."
+                    )
+
+                cur.execute(
+                    """
+                    INSERT INTO sample_media (
+                        sample_record_id,
+                        issue_id,
+                        media_type,
+                        storage_path,
+                        file_name,
+                        mime_type,
+                        caption,
+                        uploaded_by,
+                        storage_provider,
+                        original_filename,
+                        uploaded_at
+                    )
+                    VALUES (
+                        %s,
+                        %s,
+                        'Condition',
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        'local',
+                        %s,
+                        NOW()
+                    )
+                    RETURNING id;
+                    """,
+                    (
+                        sample_record_id,
+                        issue_id,
+                        storage_path,
+                        file_name,
+                        mime_type,
+                        caption,
+                        uploaded_by,
+                        file_name,
+                    ),
+                )
+
+                media = cur.fetchone()
+
+            conn.commit()
+
+            return media["id"]
+
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def get_sample_after_repair_media(
+    issue_id,
+):
+    """
+    Return after-repair condition photos for an issue.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    sample_record_id,
+                    issue_id,
+                    media_type,
+                    storage_path,
+                    file_name,
+                    mime_type,
+                    caption,
+                    uploaded_by,
+                    uploaded_at,
+                    customer_visible
+                FROM sample_media
+                WHERE issue_id = %s
+                  AND media_type = 'Condition'
+                ORDER BY uploaded_at ASC,
+                         created_at ASC;
+                """,
+                (issue_id,),
+            )
+
+            return cur.fetchall()
