@@ -4190,6 +4190,11 @@ def get_refurbished_items(
                     ri.sale_price,
                     ri.reserved_at,
                     ri.sold_at,
+                    ri.public_token,
+                    ri.customer_summary,
+                    ri.customer_sharing_enabled,
+                    ri.customer_sharing_enabled_at,
+                    ri.customer_sharing_enabled_by,
 
                     sm.sample_id
                         AS source_sample_id,
@@ -4266,6 +4271,11 @@ def get_refurbished_item(
                     ri.sale_price,
                     ri.reserved_at,
                     ri.sold_at,
+                    ri.public_token,
+                    ri.customer_summary,
+                    ri.customer_sharing_enabled,
+                    ri.customer_sharing_enabled_at,
+                    ri.customer_sharing_enabled_by,
 
                     sm.sample_id
                         AS source_sample_id,
@@ -4733,3 +4743,191 @@ def set_media_customer_visibility(
         except Exception:
             conn.rollback()
             raise
+
+# ------------------------------------------------------------------
+# Refurbished customer sharing
+# ------------------------------------------------------------------
+
+def update_refurbished_customer_sharing(
+    *,
+    refurbished_item_id,
+    customer_summary,
+    sharing_enabled,
+    updated_by,
+):
+    """
+    Update the customer-facing summary and sharing state
+    for a refurbished item.
+    """
+
+    if sharing_enabled and (
+        not updated_by
+        or not updated_by.strip()
+    ):
+        raise ValueError(
+            "Updated by is required when enabling "
+            "customer sharing."
+        )
+
+    clean_summary = (
+        customer_summary.strip()
+        if customer_summary
+        and customer_summary.strip()
+        else None
+    )
+
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    UPDATE refurbished_items
+                    SET
+                        customer_summary = %s,
+                        customer_sharing_enabled = %s,
+                        customer_sharing_enabled_at =
+                            CASE
+                                WHEN %s = TRUE
+                                     AND customer_sharing_enabled = FALSE
+                                THEN NOW()
+                                WHEN %s = FALSE
+                                THEN NULL
+                                ELSE customer_sharing_enabled_at
+                            END,
+                        customer_sharing_enabled_by =
+                            CASE
+                                WHEN %s = TRUE
+                                THEN %s
+                                ELSE NULL
+                            END,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    RETURNING
+                        id,
+                        public_token,
+                        customer_sharing_enabled;
+                    """,
+                    (
+                        clean_summary,
+                        sharing_enabled,
+                        sharing_enabled,
+                        sharing_enabled,
+                        sharing_enabled,
+                        (
+                            updated_by.strip()
+                            if updated_by
+                            else None
+                        ),
+                        refurbished_item_id,
+                    ),
+                )
+
+                updated = cur.fetchone()
+
+                if not updated:
+                    raise ValueError(
+                        "Refurbished item could not "
+                        "be found."
+                    )
+
+            conn.commit()
+
+            return updated
+
+        except Exception:
+            conn.rollback()
+            raise
+
+def get_refurbished_customer_view(
+    public_token,
+):
+    """
+    Return the customer-safe refurbished item data.
+
+    Only returns items where customer sharing
+    has been enabled.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                SELECT
+                    ri.id,
+                    ri.refurbished_id,
+                    ri.public_token,
+                    ri.condition_grade,
+                    ri.customer_summary,
+                    ri.customer_sharing_enabled,
+                    ri.created_at,
+
+                    sm.sample_name,
+                    sm.sample_id
+
+                FROM refurbished_items ri
+
+                JOIN sample_master sm
+                    ON sm.id =
+                       ri.source_sample_record_id
+
+                WHERE ri.public_token = %s
+                  AND ri.customer_sharing_enabled = TRUE
+
+                LIMIT 1;
+                """,
+                (
+                    public_token,
+                ),
+            )
+
+            return cur.fetchone()
+
+
+def get_refurbished_customer_media(
+    refurbished_item_id,
+):
+    """
+    Return only after-repair photos explicitly
+    approved for customer-facing use.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                SELECT
+                    smedia.id,
+                    smedia.storage_path,
+                    smedia.file_name,
+                    smedia.mime_type,
+                    smedia.caption,
+                    smedia.uploaded_at
+
+                FROM refurbished_items ri
+
+                JOIN sample_issues si
+                    ON si.sample_record_id =
+                       ri.source_sample_record_id
+                   AND si.issue_status =
+                       'Converted to Refurbished'
+
+                JOIN sample_media smedia
+                    ON smedia.issue_id = si.id
+
+                WHERE ri.id = %s
+                  AND smedia.media_type = 'Condition'
+                  AND smedia.customer_visible = TRUE
+
+                ORDER BY
+                    smedia.uploaded_at ASC,
+                    smedia.created_at ASC;
+                """,
+                (
+                    refurbished_item_id,
+                ),
+            )
+
+            return cur.fetchall()

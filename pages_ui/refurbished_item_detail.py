@@ -1,12 +1,18 @@
 import streamlit as st
 
 from pathlib import Path
+from urllib.parse import urlencode
 
 from repositories.sample_repository import (
     get_refurbished_item,
     get_refurbished_item_media,
     set_media_customer_visibility,
+    update_refurbished_customer_sharing,
 )
+
+# Local Streamlit MVP base URL.
+# Replace with the deployed NexaFlow URL later.
+APP_BASE_URL = "http://localhost:8501"
 
 def detail_field(
     label,
@@ -599,6 +605,212 @@ def render_refurbished_item_detail_page(hero):
             "No photos have been approved "
             "for customer use."
         )
+
+    # ------------------------------------------------------------------
+    # Customer view
+    # ------------------------------------------------------------------
+
+    st.divider()
+    st.subheader("Customer View")
+
+    st.caption(
+        "Prepare the information that can be shared "
+        "with a customer."
+    )
+
+    approved_photo_count = len(
+        customer_photos
+    )
+
+    summary_col, status_col = st.columns(
+        [3, 1],
+        vertical_alignment="top",
+    )
+
+    with summary_col:
+        st.caption("CUSTOMER PHOTOS")
+
+        if approved_photo_count == 1:
+            st.write(
+                "**1 photo approved**"
+            )
+        else:
+            st.write(
+                f"**{approved_photo_count} "
+                "photos approved**"
+            )
+
+    with status_col:
+        st.caption("SHARING STATUS")
+
+        if item["customer_sharing_enabled"]:
+            st.success("Enabled")
+        else:
+            st.info("Disabled")
+
+    customer_summary = st.text_area(
+        "Customer description",
+        value=(
+            item["customer_summary"]
+            or ""
+        ),
+        placeholder=(
+            "e.g. Rear pole section replaced. "
+            "Product fully erected, inspected "
+            "and checked after repair."
+        ),
+        height=120,
+        key=(
+            "customer_summary_"
+            f"{item['id']}"
+        ),
+    )
+
+    sharing_enabled = st.toggle(
+        "Enable customer sharing",
+        value=bool(
+            item["customer_sharing_enabled"]
+        ),
+        key=(
+            "customer_sharing_enabled_"
+            f"{item['id']}"
+        ),
+    )
+
+    if sharing_enabled:
+        st.caption(
+            "Only the customer description and "
+            "approved after-repair photos will "
+            "be available to customers."
+        )
+
+    sharing_updated_by = st.text_input(
+        (
+            "Enabled by"
+            if sharing_enabled
+            else "Updated by"
+        ),
+        value=(
+            item[
+                "customer_sharing_enabled_by"
+            ]
+            or ""
+        ),
+        key=(
+            "customer_sharing_updated_by_"
+            f"{item['id']}"
+        ),
+    )
+
+    if st.button(
+        "Save Customer View",
+        type="primary",
+        key=(
+            "save_customer_view_"
+            f"{item['id']}"
+        ),
+    ):
+
+        if (
+            sharing_enabled
+            and not customer_summary.strip()
+        ):
+            st.error(
+                "Add a customer description "
+                "before enabling sharing."
+            )
+
+        elif (
+            sharing_enabled
+            and approved_photo_count == 0
+        ):
+            st.error(
+                "Approve at least one after-repair "
+                "photo before enabling sharing."
+            )
+
+        elif (
+            sharing_enabled
+            and not sharing_updated_by.strip()
+        ):
+            st.error(
+                "Enter who is enabling "
+                "customer sharing."
+            )
+
+        else:
+            try:
+                update_refurbished_customer_sharing(
+                    refurbished_item_id=(
+                        item["id"]
+                    ),
+                    customer_summary=(
+                        customer_summary
+                    ),
+                    sharing_enabled=(
+                        sharing_enabled
+                    ),
+                    updated_by=(
+                        sharing_updated_by
+                    ),
+                )
+
+                st.success(
+                    "Customer view updated."
+                )
+
+                st.rerun()
+
+            except Exception as exc:
+                st.error(
+                    "Could not update "
+                    f"customer view: {exc}"
+                )
+
+    # ------------------------------------------------------------------
+    # Customer sharing actions
+    # ------------------------------------------------------------------
+
+    if item["customer_sharing_enabled"]:
+
+        st.markdown("### Share with Customer")
+
+        st.caption(
+            "Preview or copy the customer-facing "
+            "refurbished item link."
+        )
+
+        public_token = item["public_token"]
+
+        if not public_token:
+            st.warning(
+                "This refurbished item does not have "
+                "a public sharing token."
+            )
+
+        else:
+
+            customer_url = (
+                f"{APP_BASE_URL}/"
+                f"?refurbished={public_token}"
+            )
+
+            preview_col, copy_col = st.columns(2)
+
+            with preview_col:
+
+                st.link_button(
+                    "↗ Preview Customer View",
+                    customer_url,
+                    use_container_width=True,
+                )
+
+            with copy_col:
+
+                st.code(
+                    customer_url,
+                    language=None,
+                )    
     
 
     # -----------------------------------------

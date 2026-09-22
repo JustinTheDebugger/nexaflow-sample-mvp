@@ -53,6 +53,10 @@ from pages_ui.refurbished_item_detail import (
     render_refurbished_item_detail_page,
 )
 
+from pages_ui.refurbished_customer_view import (
+    render_refurbished_customer_view,
+)
+
 from utils.qr import build_sample_qr
 from utils.tag import build_warehouse_tag
 
@@ -171,6 +175,28 @@ def reset_sample_intake_form():
 
     for key in keys:
         st.session_state.pop(key, None)
+
+
+# ------------------------------------------------------------------
+# Public refurbished customer view
+# ------------------------------------------------------------------
+
+public_refurbished_token = (
+    st.query_params.get(
+        "refurbished"
+    )
+)
+
+if public_refurbished_token:
+
+    render_refurbished_customer_view(
+        public_refurbished_token
+    )
+
+    # Do not render the internal NexaFlow
+    # application for customer links.
+    st.stop()
+
 
 # Sidebar
 with st.sidebar:
