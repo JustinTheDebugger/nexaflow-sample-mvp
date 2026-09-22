@@ -4349,8 +4349,8 @@ def get_refurbished_item_media(
     refurbished_item_id,
 ):
     """
-    Return before-repair, repair and
-    after-repair media for a refurbished item.
+    Return before-repair and after-repair media associated
+    with the issue that produced a refurbished item.
     """
 
     with get_connection() as conn:
@@ -4359,48 +4359,40 @@ def get_refurbished_item_media(
             cur.execute(
                 """
                 SELECT
-                    sm.id,
-                    sm.sample_record_id,
-                    sm.issue_id,
-                    sm.refurbished_item_id,
-                    sm.media_type,
-                    sm.storage_provider,
-                    sm.storage_path,
-                    sm.original_filename,
-                    sm.caption,
-                    sm.customer_visible,
-                    sm.uploaded_by,
-                    sm.uploaded_at
-
-                FROM sample_media sm
-
-                JOIN refurbished_items ri
-                    ON ri.id = %s
-
-                WHERE (
-                    sm.refurbished_item_id = ri.id
-
-                    OR (
-                        sm.sample_record_id =
-                            ri.source_sample_record_id
-                        AND sm.issue_id IN (
-                            SELECT si.id
-                            FROM sample_issues si
-                            WHERE
-                                si.sample_record_id =
-                                    ri.source_sample_record_id
-                                AND si.issue_status =
-                                    'Converted to Refurbished'
-                        )
-                    )
-                )
-
+                    smedia.id,
+                    smedia.sample_record_id,
+                    smedia.issue_id,
+                    smedia.media_type,
+                    smedia.storage_path,
+                    smedia.file_name,
+                    smedia.mime_type,
+                    smedia.caption,
+                    smedia.uploaded_by,
+                    smedia.uploaded_at,
+                    smedia.customer_visible
+                FROM refurbished_items ri
+                JOIN sample_issues si
+                    ON si.sample_record_id =
+                       ri.source_sample_record_id
+                   AND si.issue_status =
+                       'Converted to Refurbished'
+                JOIN sample_media smedia
+                    ON smedia.issue_id = si.id
+                WHERE ri.id = %s
+                  AND smedia.media_type IN (
+                      'Damage',
+                      'Condition'
+                  )
                 ORDER BY
-                    sm.uploaded_at ASC;
+                    CASE smedia.media_type
+                        WHEN 'Damage' THEN 1
+                        WHEN 'Condition' THEN 2
+                        ELSE 3
+                    END,
+                    smedia.uploaded_at ASC,
+                    smedia.created_at ASC;
                 """,
-                (
-                    refurbished_item_id,
-                ),
+                (refurbished_item_id,),
             )
 
             return cur.fetchall()
@@ -4694,3 +4686,50 @@ def get_sample_after_repair_media(
             )
 
             return cur.fetchall()
+
+# ------------------------------------------------------------------
+# Update media customer visibility
+# ------------------------------------------------------------------
+
+def set_media_customer_visibility(
+    *,
+    media_id,
+    customer_visible,
+):
+    """
+    Set whether a media record is approved for
+    customer-facing use.
+    """
+
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+
+                cur.execute(
+                    """
+                    UPDATE sample_media
+                    SET
+                        customer_visible = %s
+                    WHERE id = %s
+                      AND media_type = 'Condition'
+                    RETURNING id;
+                    """,
+                    (
+                        customer_visible,
+                        media_id,
+                    ),
+                )
+
+                updated = cur.fetchone()
+
+                if not updated:
+                    raise ValueError(
+                        "After-repair photo could not "
+                        "be found."
+                    )
+
+            conn.commit()
+
+        except Exception:
+            conn.rollback()
+            raise

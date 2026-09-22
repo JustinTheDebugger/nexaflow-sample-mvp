@@ -1,8 +1,11 @@
 import streamlit as st
 
+from pathlib import Path
+
 from repositories.sample_repository import (
     get_refurbished_item,
     get_refurbished_item_media,
+    set_media_customer_visibility,
 )
 
 def detail_field(
@@ -78,6 +81,26 @@ def render_refurbished_item_detail_page(hero):
             "Refurbished item could not be found."
         )
         return
+
+    # ------------------------------------------------------------------
+    # Load refurbishment evidence
+    # ------------------------------------------------------------------
+
+    media = get_refurbished_item_media(
+        item["id"]
+    )
+
+    before_repair_photos = [
+        photo
+        for photo in media
+        if photo["media_type"] == "Damage"
+    ]
+
+    after_repair_photos = [
+        photo
+        for photo in media
+        if photo["media_type"] == "Condition"
+    ]
 
     # -----------------------------------------
     # Hero
@@ -311,12 +334,67 @@ def render_refurbished_item_detail_page(hero):
         item["conversion_notes"],
     )
 
+    # ------------------------------------------------------------------
+    # Before repair evidence
+    # ------------------------------------------------------------------
+
     st.divider()
+    st.subheader("Before Repair")
+
+    st.caption(
+        "Damage evidence recorded before the sample "
+        "entered the repair workflow."
+    )
+
+    if before_repair_photos:
+
+        columns = st.columns(3)
+
+        for index, photo in enumerate(
+            before_repair_photos
+        ):
+            with columns[index % 3]:
+
+                storage_path = photo[
+                    "storage_path"
+                ]
+
+                if (
+                    storage_path
+                    and Path(storage_path).exists()
+                ):
+                    st.image(
+                        storage_path,
+                        width="stretch",
+                    )
+
+                    if photo["caption"]:
+                        st.caption(
+                            photo["caption"]
+                        )
+
+                    if photo["uploaded_by"]:
+                        st.caption(
+                            "Recorded by "
+                            f"{photo['uploaded_by']}"
+                        )
+
+                    
+
+                else:
+                    st.warning(
+                        "Image file could not be found."
+                    )
+
+    else:
+        st.info(
+            "No before-repair photos were recorded."
+        )
 
     # -----------------------------------------
     # Repair Provenance
     # -----------------------------------------
-
+    st.divider()
     st.subheader("Repair Provenance")
 
     if item["repair_id"]:
@@ -386,12 +464,147 @@ def render_refurbished_item_detail_page(hero):
             "No linked repair record was found."
         )
 
+
+    # ------------------------------------------------------------------
+    # After repair evidence
+    # ------------------------------------------------------------------
+
     st.divider()
+    st.subheader("After Repair")
+
+    st.caption(
+        "Condition recorded after the repair "
+        "was completed."
+    )
+
+    if after_repair_photos:
+
+        columns = st.columns(3)
+
+        for index, photo in enumerate(
+            after_repair_photos
+        ):
+            with columns[index % 3]:
+
+                storage_path = photo[
+                    "storage_path"
+                ]
+
+                if (
+                    storage_path
+                    and Path(storage_path).exists()
+                ):
+                    st.image(
+                        storage_path,
+                        width="stretch",
+                    )
+
+                    if photo["caption"]:
+                        st.caption(
+                            photo["caption"]
+                        )
+
+                    if photo["uploaded_by"]:
+                        st.caption(
+                            "Recorded by "
+                            f"{photo['uploaded_by']}"
+                        )
+
+                    customer_visible = st.checkbox(
+                        "Approved for customer use",
+                        value=bool(
+                            photo["customer_visible"]
+                        ),
+                        key=(
+                            "customer_visible_"
+                            f"{photo['id']}"
+                        ),
+                    )
+
+                    if (
+                        customer_visible
+                        != bool(photo["customer_visible"])
+                    ):
+                        try:
+                            set_media_customer_visibility(
+                                media_id=photo["id"],
+                                customer_visible=customer_visible,
+                            )
+
+                            st.rerun()
+
+                        except Exception as exc:
+                            st.error(
+                                "Could not update photo visibility: "
+                                f"{exc}"
+                            )
+
+                else:
+                    st.warning(
+                        "Image file could not be found."
+                    )
+
+    else:
+        st.info(
+            "No after-repair photos were recorded."
+        )
+
+    # ------------------------------------------------------------------
+    # Customer photos
+    # ------------------------------------------------------------------
+
+    customer_photos = [
+        photo
+        for photo in after_repair_photos
+        if photo["customer_visible"]
+    ]
+
+    st.divider()
+    st.subheader("Customer Photos")
+
+    st.caption(
+        "After-repair photos approved for "
+        "customer-facing use."
+    )
+
+    if customer_photos:
+
+        columns = st.columns(3)
+
+        for index, photo in enumerate(
+            customer_photos
+        ):
+            with columns[index % 3]:
+
+                storage_path = photo[
+                    "storage_path"
+                ]
+
+                if (
+                    storage_path
+                    and Path(storage_path).exists()
+                ):
+                    st.image(
+                        storage_path,
+                        width="stretch",
+                    )
+
+                    if photo["caption"]:
+                        st.caption(
+                            photo["caption"]
+                        )
+
+    else:
+        st.info(
+            "No photos have been approved "
+            "for customer use."
+        )
+    
 
     # -----------------------------------------
     # Refurbished Evidence
     # -----------------------------------------
-
+    st.divider()
     st.subheader("Refurbishment Evidence")
 
     before_photos = [
