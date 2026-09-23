@@ -1014,97 +1014,6 @@ def get_bookings():
             return cur.fetchall()
 
 
-def create_sample_request(
-    *,
-    product_code,
-    requested_sample_name,
-    category_code,
-    quantity_required,
-    required_from,
-    required_until,
-    requested_by,
-    requester_email,
-    team,
-    purpose,
-    request_notes,
-):
-    """
-    Create a new sample request for review and return its ID and initial status.
-    """
-    query = """
-        INSERT INTO sample_requests (
-            product_code,
-            requested_sample_name,
-            category_code,
-            quantity_required,
-            required_from,
-            required_until,
-            requested_by,
-            requester_email,
-            team,
-            purpose,
-            request_notes
-        )
-        VALUES (
-            %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s,
-            %s
-        )
-        RETURNING
-            id,
-            request_status;
-    """
-
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                query,
-                (
-                    product_code,
-                    requested_sample_name,
-                    category_code,
-                    quantity_required,
-                    required_from,
-                    required_until,
-                    requested_by,
-                    requester_email,
-                    team,
-                    purpose,
-                    request_notes,
-                ),
-            )
-
-            return cur.fetchone()
-
-
-def get_sample_requests():
-    """
-    Return sample requests with linked product names, prioritising requests pending
-    review.
-    """
-    query = """
-        SELECT
-            sr.*,
-            p.product_name
-
-        FROM sample_requests sr
-
-        LEFT JOIN products p
-            ON p.product_code = sr.product_code
-
-        ORDER BY
-            CASE
-                WHEN sr.request_status = 'Pending Review'
-                THEN 0
-                ELSE 1
-            END,
-            sr.created_at DESC;
-    """
-
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query)
-            return cur.fetchall()
 
 
 def approve_sample_request(
@@ -4928,6 +4837,529 @@ def get_refurbished_customer_media(
                 (
                     refurbished_item_id,
                 ),
+            )
+
+            return cur.fetchall()
+
+
+
+
+
+
+
+# Create sample request
+def create_sample_request(
+    *,
+    items,
+    required_from,
+    required_until,
+    requested_by,
+    requester_email=None,
+    team=None,
+    purpose=None,
+):
+    """
+    Create one Product Request containing one or more
+    requested products.
+
+    The PR number, request header and all request items
+    are created in one database transaction.
+    """
+
+    if not items:
+        raise ValueError(
+            "At least one product is required."
+        )
+
+    if not requested_by or not requested_by.strip():
+        raise ValueError(
+            "Requested by is required."
+        )
+
+    if required_until < required_from:
+        raise ValueError(
+            "Required Until cannot be before "
+            "Required From."
+        )
+
+    # --------------------------------------------------
+    # Validate request items
+    # --------------------------------------------------
+
+    seen_product_codes = set()
+
+    for item in items:
+
+        product_code = item.get(
+            "product_code"
+        )
+
+        product_name = item.get(
+            "product_name"
+        )
+
+        quantity_required = item.get(
+            "quantity_required",
+            1,
+        )
+
+        if not product_code:
+            raise ValueError(
+                "Every requested product must have "
+                "a product code."
+            )
+
+        if not product_name:
+            raise ValueError(
+                "Every requested product must have "
+                "a product name."
+            )
+
+        if quantity_required < 1:
+            raise ValueError(
+                "Product quantity must be at least 1."
+            )
+
+        if product_code in seen_product_codes:
+            raise ValueError(
+                f"{product_name} has been added "
+                "more than once."
+            )
+
+        seen_product_codes.add(
+            product_code
+        )
+
+    # --------------------------------------------------
+    # Transaction
+    # --------------------------------------------------
+
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+
+                # --------------------------------------
+                # Lock request-number counter
+                # --------------------------------------
+
+                cur.execute(
+                    """
+                    SELECT
+                        last_number
+                    FROM sample_request_counters
+                    WHERE counter_name =
+                        'PRODUCT_REQUEST'
+                    FOR UPDATE;
+                    """
+                )
+
+                counter = cur.fetchone()
+
+                if not counter:
+                    raise ValueError(
+                        "Product Request counter "
+                        "could not be found."
+                    )
+
+                next_number = (
+                    counter["last_number"] + 1
+                )
+
+                request_number = (
+                    f"PR-{next_number:05d}"
+                )
+
+                # --------------------------------------
+                # Create request header
+                # --------------------------------------
+
+                cur.execute(
+                    """
+                    INSERT INTO sample_requests (
+                        request_number,
+                        required_from,
+                        required_until,
+                        requested_by,
+                        requester_email,
+                        team,
+                        purpose,
+                        request_status
+                    )
+                    VALUES (
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        'Pending Review'
+                    )
+                    RETURNING
+                        id,
+                        request_number,
+                        request_status,
+                        created_at;
+                    """,
+                    (
+                        request_number,
+                        required_from,
+                        required_until,
+                        requested_by.strip(),
+                        (
+                            requester_email.strip()
+                            if requester_email
+                            else None
+                        ),
+                        (
+                            team.strip()
+                            if team
+                            else None
+                        ),
+                        (
+                            purpose.strip()
+                            if purpose
+                            else None
+                        ),
+                    ),
+                )
+
+                request = cur.fetchone()
+
+                # --------------------------------------
+                # Create request items
+                # --------------------------------------
+
+                for item in items:
+
+                    cur.execute(
+                        """
+                        INSERT INTO sample_request_items (
+                            request_id,
+                            product_code,
+                            product_name,
+                            quantity_required
+                        )
+                        VALUES (
+                            %s,
+                            %s,
+                            %s,
+                            %s
+                        );
+                        """,
+                        (
+                            request["id"],
+                            item["product_code"],
+                            item["product_name"],
+                            int(
+                                item[
+                                    "quantity_required"
+                                ]
+                            ),
+                        ),
+                    )
+
+                # --------------------------------------
+                # Advance PR counter
+                # --------------------------------------
+
+                cur.execute(
+                    """
+                    UPDATE sample_request_counters
+                    SET
+                        last_number = %s,
+                        updated_at = NOW()
+                    WHERE counter_name =
+                        'PRODUCT_REQUEST';
+                    """,
+                    (next_number,),
+                )
+
+            conn.commit()
+
+            return {
+                "id": request["id"],
+                "request_number": (
+                    request["request_number"]
+                ),
+                "request_status": (
+                    request["request_status"]
+                ),
+                "created_at": (
+                    request["created_at"]
+                ),
+                "item_count": len(items),
+            }
+
+        except Exception:
+            conn.rollback()
+            raise
+
+# Retrieve sample request details
+def get_sample_request_detail(
+    request_id,
+):
+    """
+    Return one Product Request header together
+    with all requested product items.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            # ------------------------------------------
+            # Request header
+            # ------------------------------------------
+
+            cur.execute(
+                """
+                SELECT
+                    sr.id,
+                    sr.request_number,
+                    sr.required_from,
+                    sr.required_until,
+                    sr.requested_by,
+                    sr.requester_email,
+                    sr.team,
+                    sr.purpose,
+                    sr.request_status,
+                    sr.reviewed_by,
+                    sr.reviewed_at,
+                    sr.operations_email,
+                    sr.manager_notes,
+                    sr.rejection_reason,
+                    sr.created_at,
+                    sr.updated_at
+
+                FROM sample_requests sr
+
+                WHERE sr.id = %s
+
+                LIMIT 1;
+                """,
+                (request_id,),
+            )
+
+            request = cur.fetchone()
+
+            if not request:
+                return None
+
+            # ------------------------------------------
+            # Requested products
+            # ------------------------------------------
+
+            cur.execute(
+                """
+                SELECT
+                    sri.id,
+                    sri.product_code,
+                    sri.product_name,
+                    sri.quantity_required,
+                    sri.created_at
+
+                FROM sample_request_items sri
+
+                WHERE sri.request_id = %s
+
+                ORDER BY
+                    sri.product_name ASC;
+                """,
+                (request_id,),
+            )
+
+            items = cur.fetchall()
+
+            return {
+                "request": request,
+                "items": items,
+            }
+
+def update_sample_request_status(
+    request_id,
+    new_status,
+    rejection_reason=None,
+):
+    """
+    Approve or reject a Product Request.
+
+    The reviewing user will be recorded automatically
+    when authentication is introduced.
+    """
+
+    allowed_statuses = {
+        "Approved",
+        "Rejected",
+    }
+
+    if new_status not in allowed_statuses:
+        raise ValueError(
+            "Product Request can only be "
+            "Approved or Rejected."
+        )
+
+    if (
+        new_status == "Rejected"
+        and not (
+            rejection_reason
+            and rejection_reason.strip()
+        )
+    ):
+        raise ValueError(
+            "A rejection reason is required."
+        )
+
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+
+                # Lock the request during review.
+                cur.execute(
+                    """
+                    SELECT
+                        id,
+                        request_number,
+                        request_status
+                    FROM sample_requests
+                    WHERE id = %s
+                    FOR UPDATE;
+                    """,
+                    (request_id,),
+                )
+
+                request = cur.fetchone()
+
+                if not request:
+                    raise ValueError(
+                        "Product Request could not "
+                        "be found."
+                    )
+
+                if (
+                    request["request_status"]
+                    != "Pending Review"
+                ):
+                    raise ValueError(
+                        (
+                            f"{request['request_number']} "
+                            "has already been reviewed."
+                        )
+                    )
+
+                cur.execute(
+                    """
+                    UPDATE sample_requests
+                    SET
+                        request_status = %s,
+                        reviewed_at = NOW(),
+                        rejection_reason = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    RETURNING
+                        id,
+                        request_number,
+                        request_status,
+                        reviewed_at;
+                    """,
+                    (
+                        new_status,
+                        (
+                            rejection_reason.strip()
+                            if rejection_reason
+                            else None
+                        ),
+                        request_id,
+                    ),
+                )
+
+                updated_request = (
+                    cur.fetchone()
+                )
+
+            conn.commit()
+
+            return updated_request
+
+        except Exception:
+            conn.rollback()
+            raise
+
+# ------------------------------------------------------------------
+# Retrieve Product Request listing
+# ------------------------------------------------------------------
+
+def get_sample_requests(
+    status=None,
+):
+    """
+    Return Product Requests for the management page.
+
+    Includes the number of distinct products and the
+    total quantity requested for each PR.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            query = """
+                SELECT
+                    sr.id,
+                    sr.request_number,
+                    sr.required_from,
+                    sr.required_until,
+                    sr.requested_by,
+                    sr.purpose,
+                    sr.request_status,
+                    sr.created_at,
+
+                    COUNT(sri.id) AS product_count,
+
+                    COALESCE(
+                        SUM(sri.quantity_required),
+                        0
+                    ) AS total_quantity
+
+                FROM sample_requests sr
+
+                LEFT JOIN sample_request_items sri
+                    ON sri.request_id = sr.id
+            """
+
+            params = []
+
+            if status:
+                query += """
+                    WHERE sr.request_status = %s
+                """
+
+                params.append(
+                    status
+                )
+
+            query += """
+                GROUP BY
+                    sr.id,
+                    sr.request_number,
+                    sr.required_from,
+                    sr.required_until,
+                    sr.requested_by,
+                    sr.purpose,
+                    sr.request_status,
+                    sr.created_at
+
+                ORDER BY
+                    CASE
+                        WHEN sr.request_status =
+                            'Pending Review'
+                        THEN 0
+                        ELSE 1
+                    END,
+                    sr.created_at DESC;
+            """
+
+            cur.execute(
+                query,
+                params,
             )
 
             return cur.fetchall()

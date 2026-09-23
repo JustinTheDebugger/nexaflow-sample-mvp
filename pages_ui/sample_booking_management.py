@@ -1002,346 +1002,73 @@ def render_sample_booking_management(hero):
     # ---------------------------------------------------------
 
     with tabs[1]:
-        if not pending_requests:
+        # ---------------------------------------------------------
+        # Product Sample Requests
+        # ---------------------------------------------------------
+        #
+        # Product Requests are now managed through the dedicated
+        # Product Sample Request Listing page.
+        #
+        # This tab remains as a convenient shortcut from
+        # Bookings & Returns.
+        # ---------------------------------------------------------
+
+        st.subheader(
+            "Product Sample Requests"
+        )
+
+        st.caption(
+            (
+                "Product requests are managed separately "
+                "from physical sample bookings."
+            )
+        )
+
+        if pending_requests:
+
+            pending_count = len(
+                pending_requests
+            )
+
             st.info(
-                "No sample requests are waiting for review."
+                (
+                    f"{pending_count} product sample "
+                    f"request{'s' if pending_count != 1 else ''} "
+                    "waiting for review."
+                )
             )
 
-        for request in pending_requests:
-            with st.container(border=True):
-                product_name = (
-                    request["product_name"]
-                    or request["requested_sample_name"]
-                    or "Unnamed Product"
+            if st.button(
+                "Open Product Sample Request Listing",
+                type="primary",
+                width="content",
+                key="open_product_request_listing",
+            ):
+                # Clear any old Product Request workflow state.
+                st.session_state.pop(
+                    "approve_request_id",
+                    None,
                 )
 
-                st.markdown(
-                    f"### {product_name}"
+                st.session_state.pop(
+                    "reject_request_id",
+                    None,
                 )
 
-                if request["product_code"]:
-                    st.caption(
-                        request["product_code"]
-                    )
-
-                col1, col2, col3 = st.columns(
-                    [1.5, 1.5, 1]
+                # Open the dedicated management page.
+                st.session_state[
+                    "workflow_page"
+                ] = (
+                    "Product Sample Request Listing"
                 )
 
-                with col1:
-                    st.caption("Required Dates")
+                st.rerun()
 
-                    st.write(
-                        request["required_from"].strftime(
-                            "%d %b %Y"
-                        )
-                    )
+        else:
 
-                    st.write(
-                        f"to "
-                        f"{request['required_until'].strftime('%d %b %Y')}"
-                    )
-
-                with col2:
-                    st.caption("Requested By")
-
-                    st.write(
-                        request["requested_by"]
-                    )
-
-                    if request["team"]:
-                        st.caption(
-                            request["team"]
-                        )
-
-                    st.write(
-                        request["requester_email"]
-                    )
-
-                with col3:
-                    st.caption("Quantity")
-
-                    st.write(
-                        request["quantity_required"]
-                    )
-
-                    st.caption("Status")
-
-                    st.write(
-                        request["request_status"]
-                    )
-
-                if request["purpose"]:
-                    st.write(
-                        f"**Purpose:** {request['purpose']}"
-                    )
-
-                if request["request_notes"]:
-                    st.write(
-                        f"**Notes:** {request['request_notes']}"
-                    )
-
-                action_col1, action_col2 = st.columns(2)
-
-                with action_col1:
-                    if st.button(
-                        "Approve",
-                        key=(
-                            f"approve_request_"
-                            f"{request['id']}"
-                        ),
-                        type="primary",
-                        width="stretch",
-                    ):
-                        st.session_state[
-                            "approve_request_id"
-                        ] = request["id"]
-
-                        st.session_state.pop(
-                            "reject_request_id",
-                            None,
-                        )
-
-                        st.rerun()
-
-                with action_col2:
-                    if st.button(
-                        "Reject",
-                        key=(
-                            f"reject_request_"
-                            f"{request['id']}"
-                        ),
-                        width="stretch",
-                    ):
-                        st.session_state[
-                            "reject_request_id"
-                        ] = request["id"]
-
-                        st.session_state.pop(
-                            "approve_request_id",
-                            None,
-                        )
-
-                        st.rerun()
-
-    # ---------------------------------------------------------
-    # Approve Sample Request
-    # ---------------------------------------------------------
-
-    approve_request_id = st.session_state.get(
-        "approve_request_id"
-    )
-
-    if approve_request_id:
-        selected_request = next(
-            (
-                request
-                for request in pending_requests
-                if request["id"] == approve_request_id
-            ),
-            None,
-        )
-
-        if selected_request:
-            st.divider()
-            st.subheader("Approve Sample Request")
-
-            st.write(
-                selected_request["product_name"]
-                or selected_request["requested_sample_name"]
-                or "Unnamed Product"
+            st.success(
+                "No product sample requests are waiting for review."
             )
-
-            if selected_request["product_code"]:
-                st.caption(
-                    selected_request["product_code"]
-                )
-
-            with st.form("approve_sample_request_form"):
-                reviewed_by = st.text_input(
-                    "Reviewed By *"
-                )
-
-                operations_email = st.text_input(
-                    "Operations Staff Email *"
-                )
-
-                manager_notes = st.text_area(
-                    "Manager Notes"
-                )
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    confirm_approve = st.form_submit_button(
-                        "Confirm Approval",
-                        type="primary",
-                        width="stretch",
-                    )
-
-                with col2:
-                    close_approve = st.form_submit_button(
-                        "Close",
-                        width="stretch",
-                    )
-
-                if close_approve:
-                    st.session_state.pop(
-                        "approve_request_id",
-                        None,
-                    )
-                    st.rerun()
-
-                if confirm_approve:
-                    if not reviewed_by.strip():
-                        st.error(
-                            "Please enter who reviewed the request."
-                        )
-
-                    elif not operations_email.strip():
-                        st.error(
-                            "Please enter the Operations Staff email."
-                        )
-
-                    elif "@" not in operations_email:
-                        st.error(
-                            "Please enter a valid email address."
-                        )
-
-                    else:
-                        try:
-                            approve_sample_request(
-                                request_id=approve_request_id,
-                                reviewed_by=reviewed_by.strip(),
-                                operations_email=operations_email.strip(),
-                                manager_notes=manager_notes.strip(),
-                            )
-
-                            st.session_state.pop(
-                                "approve_request_id",
-                                None,
-                            )
-
-                            st.session_state[
-                                "booking_management_flash"
-                            ] = {
-                                "type": "success",
-                                "message": (
-                                    "Sample request approved successfully."
-                                ),
-                            }
-
-                            st.rerun()
-
-                        except Exception as exc:
-                            st.error(
-                                f"Could not approve request: {exc}"
-                            )
-
-    # ---------------------------------------------------------
-    # Reject Sample Request
-    # ---------------------------------------------------------
-
-    reject_request_id = st.session_state.get(
-        "reject_request_id"
-    )
-
-    if reject_request_id:
-        selected_request = next(
-            (
-                request
-                for request in pending_requests
-                if request["id"] == reject_request_id
-            ),
-            None,
-        )
-
-        if selected_request:
-            st.divider()
-            st.subheader("Reject Sample Request")
-
-            st.write(
-                selected_request["product_name"]
-                or selected_request["requested_sample_name"]
-                or "Unnamed Product"
-            )
-
-            if selected_request["product_code"]:
-                st.caption(
-                    selected_request["product_code"]
-                )
-
-            with st.form("reject_sample_request_form"):
-                reviewed_by = st.text_input(
-                    "Reviewed By *",
-                    key="reject_reviewed_by",
-                )
-
-                rejection_reason = st.text_area(
-                    "Rejection Reason *"
-                )
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    confirm_reject = st.form_submit_button(
-                        "Confirm Rejection",
-                        type="primary",
-                        width="stretch",
-                    )
-
-                with col2:
-                    close_reject = st.form_submit_button(
-                        "Close",
-                        width="stretch",
-                    )
-
-                if close_reject:
-                    st.session_state.pop(
-                        "reject_request_id",
-                        None,
-                    )
-                    st.rerun()
-
-                if confirm_reject:
-                    if not reviewed_by.strip():
-                        st.error(
-                            "Please enter who reviewed the request."
-                        )
-
-                    elif not rejection_reason.strip():
-                        st.error(
-                            "Please enter the rejection reason."
-                        )
-
-                    else:
-                        try:
-                            reject_sample_request(
-                                request_id=reject_request_id,
-                                reviewed_by=reviewed_by.strip(),
-                                rejection_reason=rejection_reason.strip(),
-                            )
-
-                            st.session_state.pop(
-                                "reject_request_id",
-                                None,
-                            )
-
-                            st.session_state[
-                                "booking_management_flash"
-                            ] = {
-                                "type": "success",
-                                "message": (
-                                    "Sample request rejected successfully."
-                                ),
-                            }
-
-                            st.rerun()
-
-                        except Exception as exc:
-                            st.error(
-                                f"Could not reject request: {exc}"
-                            )
 
     # ---------------------------------------------------------
     # Booking History

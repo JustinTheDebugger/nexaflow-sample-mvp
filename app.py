@@ -57,6 +57,18 @@ from pages_ui.refurbished_customer_view import (
     render_refurbished_customer_view,
 )
 
+from pages_ui.product_request import (
+    render_product_request_page,
+)
+
+from pages_ui.product_request_management import (
+    render_product_request_management_page,
+)
+
+from pages_ui.product_request_detail import (
+    render_product_request_detail_page,
+)
+
 from utils.qr import build_sample_qr
 from utils.tag import build_warehouse_tag
 
@@ -211,8 +223,12 @@ with st.sidebar:
             "Sample Search",
             "Sample Detail",
             "Sample Intake",
+
             "Book Samples",
+            "Product Request",
+            "Product Sample Request Listing",
             "Bookings & Returns",
+
             "Sample Issues",
             "Refurbished Items",
             "QR Action Hub",
@@ -250,6 +266,11 @@ with st.sidebar:
 
         st.session_state.pop(
             "selected_refurbished_item_id",
+            None,
+        )
+
+        st.session_state.pop(
+            "selected_product_request_id",
             None,
         )
 
@@ -798,6 +819,15 @@ elif page == "Sample Intake":
 
 elif page == "Book Samples":
     render_sample_booking(hero)
+
+elif page == "Product Request":
+    render_product_request_page(hero)
+
+elif page == "Product Sample Request Listing":
+    render_product_request_management_page(hero)
+
+elif page == "Product Request Detail":
+    render_product_request_detail_page(hero)
 
 elif page == "Bookings & Returns":
     render_sample_booking_management(hero)
