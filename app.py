@@ -25,6 +25,38 @@ from pages_ui.sample_booking import (
     render_sample_booking,
 )
 
+from pages_ui.sample_booking_management import (
+    render_sample_booking_management,
+)
+
+from pages_ui.sample_return import (
+    render_sample_return_page,
+)
+
+from pages_ui.sample_issues import (
+    render_sample_issues_page,
+)
+
+from pages_ui.sample_issue_detail import (
+    render_sample_issue_detail_page,
+)
+
+from pages_ui.master_file_release_control import (
+    render_master_file_release_control_page,
+)
+
+from pages_ui.refurbished_items import (
+    render_refurbished_items_page,
+)
+
+from pages_ui.refurbished_item_detail import (
+    render_refurbished_item_detail_page,
+)
+
+from pages_ui.refurbished_customer_view import (
+    render_refurbished_customer_view,
+)
+
 from utils.qr import build_sample_qr
 from utils.tag import build_warehouse_tag
 
@@ -144,30 +176,128 @@ def reset_sample_intake_form():
     for key in keys:
         st.session_state.pop(key, None)
 
+
+# ------------------------------------------------------------------
+# Public refurbished customer view
+# ------------------------------------------------------------------
+
+public_refurbished_token = (
+    st.query_params.get(
+        "refurbished"
+    )
+)
+
+if public_refurbished_token:
+
+    render_refurbished_customer_view(
+        public_refurbished_token
+    )
+
+    # Do not render the internal NexaFlow
+    # application for customer links.
+    st.stop()
+
+
+# Sidebar
 with st.sidebar:
     st.markdown("## ◈ NexaFlow")
     st.caption("Asset Tracking & Operational Visibility")
     st.markdown("---")
 
-    page = st.radio(
+    selected_page = st.radio(
         "Navigate",
         [
             "Executive Dashboard",
             "Sample Search",
             "Sample Detail",
             "Sample Intake",
-            "Sample Booking",
+            "Book Samples",
+            "Bookings & Returns",
+            "Sample Issues",
+            "Refurbished Items",
             "QR Action Hub",
+            "Master Files",
         ],
         label_visibility="collapsed",
         key="page",
     )
+
+    last_sidebar_page = st.session_state.get(
+    "_last_sidebar_page"
+    )
+
+    if (
+        last_sidebar_page is not None
+        and selected_page != last_sidebar_page
+    ):
+        # The user intentionally selected another
+        # page from the sidebar. Leave any hidden
+        # workflow and follow the sidebar navigation.
+        st.session_state.pop(
+            "workflow_page",
+            None,
+        )
+
+        st.session_state.pop(
+            "selected_sample_issue_id",
+            None,
+        )
+
+        st.session_state.pop(
+            "selected_return_booking_group_id",
+            None,
+        )
+
+        st.session_state.pop(
+            "selected_refurbished_item_id",
+            None,
+        )
+
+    st.session_state[
+        "_last_sidebar_page"
+    ] = selected_page
+
+    workflow_page = st.session_state.get(
+        "workflow_page"
+    )
+
+    page = workflow_page or selected_page
+
+    workflow_page = st.session_state.get(
+        "workflow_page"
+    )
+
+    page = workflow_page or selected_page
 
     st.markdown("---")
     st.caption("Executive Demo · Streamlit MVP")
 
 samples, bookings, timeline = frames()
 
+st.markdown(
+    """
+    <style>
+
+    /* other NexaFlow CSS */
+
+    .hero h1 {
+        color: #17365d !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    .hero p {
+        color: #64748b !important;
+        margin: 0.35rem 0 0 0 !important;
+        padding: 0 !important;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Render Route Page
 if page == "Executive Dashboard":
     hero(
         "Executive Asset Dashboard",
@@ -666,8 +796,29 @@ elif page == "Sample Intake":
 
                     st.rerun()
 
-elif page == "Sample Booking":
+elif page == "Book Samples":
     render_sample_booking(hero)
+
+elif page == "Bookings & Returns":
+    render_sample_booking_management(hero)
+
+elif page == "Sample Return":
+    render_sample_return_page(hero)
+
+elif page == "Sample Issues":
+    render_sample_issues_page(hero)
+
+elif page == "Sample Issue Detail":
+    render_sample_issue_detail_page(hero)
+
+elif page == "Refurbished Items":
+    render_refurbished_items_page(hero)
+
+elif page == "Refurbished Item Detail":
+    render_refurbished_item_detail_page(hero)
+
+elif page == "Master Files":
+    render_master_file_release_control_page()
 
 elif page == "QR Action Hub":
     hero(
