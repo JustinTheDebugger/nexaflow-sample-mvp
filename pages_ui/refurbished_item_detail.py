@@ -10,6 +10,10 @@ from repositories.sample_repository import (
     update_refurbished_customer_sharing,
 )
 
+from utils.refurbished_pdf import (
+    build_refurbished_customer_pdf,
+)
+
 # Local Streamlit MVP base URL.
 # Replace with the deployed NexaFlow URL later.
 APP_BASE_URL = "http://localhost:8501"
@@ -795,7 +799,9 @@ def render_refurbished_item_detail_page(hero):
                 f"?refurbished={public_token}"
             )
 
-            preview_col, copy_col = st.columns(2)
+            preview_col, copy_col, pdf_col = (
+                st.columns(3)
+            )
 
             with preview_col:
 
@@ -811,6 +817,37 @@ def render_refurbished_item_detail_page(hero):
                     customer_url,
                     language=None,
                 )    
+
+            with pdf_col:
+
+                try:
+                    customer_pdf = (
+                        build_refurbished_customer_pdf(
+                            item=item,
+                            customer_photos=customer_photos,
+                        )
+                    )
+
+                    st.download_button(
+                        "↓ Download Customer PDF",
+                        data=customer_pdf,
+                        file_name=(
+                            f"{item['refurbished_id']}"
+                            "_customer.pdf"
+                        ),
+                        mime="application/pdf",
+                        use_container_width=True,
+                        key=(
+                            "download_customer_pdf_"
+                            f"{item['id']}"
+                        ),
+                    )
+
+                except Exception as exc:
+                    st.error(
+                        "Could not generate PDF: "
+                        f"{exc}"
+                    )
     
 
     # -----------------------------------------
