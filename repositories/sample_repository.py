@@ -763,10 +763,13 @@ def is_sample_available(
             WHERE sb.sample_record_id = %s
 
               AND sb.booking_status IN (
-                  'Reserved',
-                  'Pending Approval',
-                  'Approved'
-              )
+                'Reserved',
+                'Pending Approval',
+                'Approved',
+                'Preparing',
+                'Ready for Collection',
+                'Checked Out'
+            )
 
               AND sb.start_date <= %s
               AND sb.end_date >= %s
@@ -1250,7 +1253,12 @@ def search_available_samples(
 
               WHERE sb.sample_record_id = sm.id
 
-                AND sb.booking_status = 'Reserved'
+                AND sb.booking_status IN (
+                    'Reserved',
+                    'Preparing',
+                    'Ready for Collection',
+                    'Checked Out'
+                )
 
                 AND sb.start_date <= %s
 
@@ -1385,7 +1393,12 @@ def create_sample_bookings(
                 WHERE sb.sample_record_id
                     = ANY(%s::uuid[])
 
-                  AND sb.booking_status = 'Reserved'
+                  AND sb.booking_status IN (
+                      'Reserved',
+                      'Preparing',
+                      'Ready for Collection',
+                      'Checked Out'
+                  )
 
                   AND sb.start_date <= %s
                   AND sb.end_date >= %s;
@@ -1856,6 +1869,1026 @@ def cancel_booking_group(
         conn.commit()
 
     return booking["booking_number"]
+
+# =============================================================================
+# BOOKING PREPARATION
+# =============================================================================
+
+def start_booking_preparation(
+    booking_group_id,
+):
+    """
+    Start physical preparation of a reserved booking.
+
+    Changes the booking group and its active booking items
+    from Reserved to Preparing.
+
+    Does not move any samples yet.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            # Lock the booking group so two users cannot
+            # start the same preparation simultaneously.
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    booking_number,
+                    booking_status
+                FROM sample_booking_groups
+                WHERE id = %s
+                FOR UPDATE;
+                """,
+                (booking_group_id,),
+            )
+
+            booking_group = cur.fetchone()
+
+            if not booking_group:
+                raise ValueError(
+                    "Booking group could not be found."
+                )
+
+            if (
+                booking_group["booking_status"]
+                != "Reserved"
+            ):
+                raise ValueError(
+                    (
+                        "Only Reserved bookings can "
+                        "start preparation."
+                    )
+                )
+
+            # Update the overall booking lifecycle.
+            cur.execute(
+                """
+                UPDATE sample_booking_groups
+                SET
+                    booking_status = 'Preparing',
+                    preparation_started_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = %s;
+                """,
+                (booking_group_id,),
+            )
+
+            # Keep active booking items aligned with
+            # the group lifecycle.
+            cur.execute(
+                """
+                UPDATE sample_bookings
+                SET
+                    booking_status = 'Preparing',
+                    updated_at = NOW()
+                WHERE booking_group_id = %s
+                  AND booking_status = 'Reserved';
+                """,
+                (booking_group_id,),
+            )
+
+        conn.commit()
+
+    return {
+        "booking_group_id": booking_group_id,
+        "booking_number": (
+            booking_group["booking_number"]
+        ),
+        "booking_status": "Preparing",
+    }
+
+
+def get_booking_preparation(
+    booking_group_id,
+):
+    """
+    Return booking header and item-level preparation
+    information for a booking group.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                SELECT
+                    sbg.id,
+                    sbg.booking_number,
+                    sbg.booked_by,
+                    sbg.start_date,
+                    sbg.end_date,
+                    sbg.booking_status,
+                    sbg.preparation_started_at,
+                    sbg.ready_for_collection_at,
+                    sbg.checked_out_at
+                FROM sample_booking_groups sbg
+                WHERE sbg.id = %s;
+                """,
+                (booking_group_id,),
+            )
+
+            booking_group = cur.fetchone()
+
+            if not booking_group:
+                return None
+
+            cur.execute(
+                """
+                SELECT
+                    sb.id AS booking_id,
+                    sb.sample_record_id,
+                    sb.booking_status,
+                    sb.preparation_status,
+                    sb.prepared_at,
+                    sb.missing_reported_at,
+                    sb.missing_note,
+                    sb.replacement_sample_record_id,
+
+                    sm.sample_id,
+                    sm.sample_name,
+                    sm.condition,
+                    sm.asset_state,
+
+                    sl.code AS location_code,
+                    sl.name AS location_name,
+
+                    replacement.sample_id
+                        AS replacement_sample_id,
+                    replacement.sample_name
+                        AS replacement_sample_name,
+
+                    replacement_location.code
+                        AS replacement_location_code,
+                    replacement_location.name
+                        AS replacement_location_name
+
+                FROM sample_bookings sb
+
+                JOIN sample_master sm
+                    ON sm.id =
+                       sb.sample_record_id
+
+                LEFT JOIN sample_locations sl
+                    ON sl.id =
+                       sm.current_location_id
+
+                LEFT JOIN sample_master replacement
+                    ON replacement.id =
+                       sb.replacement_sample_record_id
+
+                LEFT JOIN sample_locations
+                    replacement_location
+                    ON replacement_location.id =
+                       replacement.current_location_id
+
+                WHERE sb.booking_group_id = %s
+
+                ORDER BY
+                    sm.sample_name,
+                    sm.sample_id;
+                """,
+                (booking_group_id,),
+            )
+
+            items = cur.fetchall()
+
+    return {
+        "booking": booking_group,
+        "items": items,
+    }
+
+def mark_booking_item_prepared(
+    booking_id,
+):
+    """
+    Mark one booked sample as physically prepared.
+
+    The sample is moved from its current location to
+    C1 - Collection / Dispatch Area.
+
+    The overall booking remains in Preparing status until
+    Operations submits the completed preparation.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            # -------------------------------------------------
+            # Lock the booking item and retrieve its sample.
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                SELECT
+                    sb.id AS booking_id,
+                    sb.booking_group_id,
+                    sb.sample_record_id,
+                    sb.booking_status,
+                    sb.preparation_status,
+
+                    sbg.booking_number,
+                    sbg.booking_status
+                        AS group_booking_status,
+
+                    sm.sample_id,
+                    sm.sample_name,
+                    sm.current_location_id,
+                    sm.asset_state,
+                    sm.condition
+
+                FROM sample_bookings sb
+
+                JOIN sample_booking_groups sbg
+                    ON sbg.id =
+                       sb.booking_group_id
+
+                JOIN sample_master sm
+                    ON sm.id =
+                       sb.sample_record_id
+
+                WHERE sb.id = %s
+
+                FOR UPDATE OF sb, sbg, sm;
+                """,
+                (booking_id,),
+            )
+
+            item = cur.fetchone()
+
+            if not item:
+                raise ValueError(
+                    "Booking item could not be found."
+                )
+
+            # -------------------------------------------------
+            # Validate workflow state.
+            # -------------------------------------------------
+
+            if (
+                item["group_booking_status"]
+                != "Preparing"
+            ):
+                raise ValueError(
+                    (
+                        "Samples can only be prepared while "
+                        "the booking is in Preparing status."
+                    )
+                )
+
+            if (
+                item["preparation_status"]
+                != "Not Prepared"
+            ):
+                raise ValueError(
+                    (
+                        "This booking item has already been "
+                        "processed during preparation."
+                    )
+                )
+
+            if item["asset_state"] != "Active":
+                raise ValueError(
+                    (
+                        f"{item['sample_id']} is not an "
+                        "active sample."
+                    )
+                )
+
+            # -------------------------------------------------
+            # Find C1.
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    code,
+                    name
+                FROM sample_locations
+                WHERE code = 'C1'
+                LIMIT 1;
+                """
+            )
+
+            collection_location = cur.fetchone()
+
+            if not collection_location:
+                raise ValueError(
+                    (
+                        "C1 - Collection / Dispatch Area "
+                        "could not be found."
+                    )
+                )
+
+            previous_location_id = (
+                item["current_location_id"]
+            )
+
+            # -------------------------------------------------
+            # Mark the booking item prepared.
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                UPDATE sample_bookings
+                SET
+                    preparation_status = 'Prepared',
+                    prepared_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = %s;
+                """,
+                (booking_id,),
+            )
+
+            # -------------------------------------------------
+            # Physically move the sample to C1.
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                UPDATE sample_master
+                SET
+                    current_location_id = %s,
+                    updated_at = NOW()
+                WHERE id = %s;
+                """,
+                (
+                    collection_location["id"],
+                    item["sample_record_id"],
+                ),
+            )
+
+            # -------------------------------------------------
+            # Record the physical movement.
+            # -------------------------------------------------
+
+            event_details = (
+                f"Prepared for booking "
+                f"{item['booking_number']} and moved to "
+                f"C1 - Collection / Dispatch Area."
+            )
+
+            cur.execute(
+                """
+                INSERT INTO sample_events (
+                    sample_record_id,
+                    event_type,
+                    event_date,
+                    title,
+                    details,
+                    previous_location_id,
+                    new_location_id,
+                    created_at
+                )
+                VALUES (
+                    %s,
+                    'SAMPLE_PREPARED',
+                    NOW(),
+                    'Prepared for Collection',
+                    %s,
+                    %s,
+                    %s,
+                    NOW()
+                );
+                """,
+                (
+                    item["sample_record_id"],
+                    event_details,
+                    previous_location_id,
+                    collection_location["id"],
+                ),
+            )
+
+        conn.commit()
+
+    return {
+        "booking_id": booking_id,
+        "sample_record_id": (
+            item["sample_record_id"]
+        ),
+        "sample_id": item["sample_id"],
+        "booking_number": (
+            item["booking_number"]
+        ),
+        "preparation_status": "Prepared",
+        "collection_location": "C1",
+    }
+
+def undo_booking_item_prepared(
+    booking_id,
+):
+    """
+    Undo preparation of a booking item.
+
+    Moves the sample from C1 back to the location it occupied
+    immediately before SAMPLE_PREPARED.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            cur.execute(
+                """
+                SELECT
+                    sb.id AS booking_id,
+                    sb.booking_group_id,
+                    sb.sample_record_id,
+                    sb.preparation_status,
+
+                    sbg.booking_number,
+                    sbg.booking_status
+                        AS group_booking_status,
+
+                    sm.sample_id,
+                    sm.current_location_id
+
+                FROM sample_bookings sb
+
+                JOIN sample_booking_groups sbg
+                    ON sbg.id = sb.booking_group_id
+
+                JOIN sample_master sm
+                    ON sm.id = sb.sample_record_id
+
+                WHERE sb.id = %s
+
+                FOR UPDATE OF sb, sbg, sm;
+                """,
+                (booking_id,),
+            )
+
+            item = cur.fetchone()
+
+            if not item:
+                raise ValueError(
+                    "Booking item could not be found."
+                )
+
+            if (
+                item["group_booking_status"]
+                != "Preparing"
+            ):
+                raise ValueError(
+                    (
+                        "Prepared items can only be undone "
+                        "while the booking is Preparing."
+                    )
+                )
+
+            if (
+                item["preparation_status"]
+                != "Prepared"
+            ):
+                raise ValueError(
+                    "This item is not currently Prepared."
+                )
+
+            # Find the SAMPLE_PREPARED event created for this
+            # booking item. At this stage there should be one
+            # preparation movement for the current workflow.
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    previous_location_id,
+                    new_location_id
+                FROM sample_events
+                WHERE sample_record_id = %s
+                  AND event_type = 'SAMPLE_PREPARED'
+                  AND details LIKE %s
+                ORDER BY event_date DESC
+                LIMIT 1;
+                """,
+                (
+                    item["sample_record_id"],
+                    (
+                        f"%{item['booking_number']}%"
+                    ),
+                ),
+            )
+
+            prepared_event = cur.fetchone()
+
+            if not prepared_event:
+                raise ValueError(
+                    (
+                        "The original sample location "
+                        "could not be determined."
+                    )
+                )
+
+            previous_location_id = (
+                prepared_event[
+                    "previous_location_id"
+                ]
+            )
+
+            if previous_location_id is None:
+                raise ValueError(
+                    (
+                        "The sample did not have a recorded "
+                        "location before preparation."
+                    )
+                )
+
+            # Return sample to its previous location.
+            cur.execute(
+                """
+                UPDATE sample_master
+                SET
+                    current_location_id = %s,
+                    updated_at = NOW()
+                WHERE id = %s;
+                """,
+                (
+                    previous_location_id,
+                    item["sample_record_id"],
+                ),
+            )
+
+            # Reset item preparation.
+            cur.execute(
+                """
+                UPDATE sample_bookings
+                SET
+                    preparation_status = 'Not Prepared',
+                    prepared_at = NULL,
+                    updated_at = NOW()
+                WHERE id = %s;
+                """,
+                (booking_id,),
+            )
+
+            # Keep an audit trail rather than deleting the
+            # original SAMPLE_PREPARED event.
+            cur.execute(
+                """
+                INSERT INTO sample_events (
+                    sample_record_id,
+                    event_type,
+                    event_date,
+                    title,
+                    details,
+                    previous_location_id,
+                    new_location_id,
+                    created_at
+                )
+                VALUES (
+                    %s,
+                    'SAMPLE_PREPARATION_UNDONE',
+                    NOW(),
+                    'Preparation Reversed',
+                    %s,
+                    %s,
+                    %s,
+                    NOW()
+                );
+                """,
+                (
+                    item["sample_record_id"],
+                    (
+                        f"Preparation for booking "
+                        f"{item['booking_number']} was "
+                        "reversed."
+                    ),
+                    item["current_location_id"],
+                    previous_location_id,
+                ),
+            )
+
+        conn.commit()
+
+    return {
+        "booking_id": booking_id,
+        "sample_id": item["sample_id"],
+        "preparation_status": "Not Prepared",
+    }
+
+def report_booking_item_missing(
+    booking_id,
+    missing_note,
+):
+    """
+    Report a booked sample as missing during preparation.
+
+    The missing sample remains part of the original booking.
+    It is flagged Lost and removed from its expected physical
+    location.
+
+    Missing items do not prevent Operations from continuing
+    preparation of the remaining booking items.
+    """
+
+    missing_note = (
+        missing_note.strip()
+        if missing_note
+        else ""
+    )
+
+    if not missing_note:
+        raise ValueError(
+            "A missing-item note is required."
+        )
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            # -------------------------------------------------
+            # Lock booking item, group and sample.
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                SELECT
+                    sb.id AS booking_id,
+                    sb.booking_group_id,
+                    sb.sample_record_id,
+                    sb.preparation_status,
+
+                    sbg.booking_number,
+                    sbg.booking_status
+                        AS group_booking_status,
+
+                    sm.sample_id,
+                    sm.sample_name,
+                    sm.current_location_id,
+                    sm.asset_state,
+
+                    sl.code AS location_code,
+                    sl.name AS location_name
+
+                FROM sample_bookings sb
+
+                JOIN sample_booking_groups sbg
+                    ON sbg.id =
+                       sb.booking_group_id
+
+                JOIN sample_master sm
+                    ON sm.id =
+                       sb.sample_record_id
+
+                LEFT JOIN sample_locations sl
+                    ON sl.id =
+                       sm.current_location_id
+
+                WHERE sb.id = %s
+
+                FOR UPDATE OF sb, sbg, sm;
+                """,
+                (booking_id,),
+            )
+
+            item = cur.fetchone()
+
+            if not item:
+                raise ValueError(
+                    "Booking item could not be found."
+                )
+
+            # -------------------------------------------------
+            # Validate.
+            # -------------------------------------------------
+
+            if (
+                item["group_booking_status"]
+                != "Preparing"
+            ):
+                raise ValueError(
+                    (
+                        "Missing samples can only be "
+                        "reported while preparing a booking."
+                    )
+                )
+
+            if (
+                item["preparation_status"]
+                != "Not Prepared"
+            ):
+                raise ValueError(
+                    (
+                        "This booking item has already been "
+                        "processed during preparation."
+                    )
+                )
+
+            previous_location_id = (
+                item["current_location_id"]
+            )
+
+            # -------------------------------------------------
+            # Flag the booking item.
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                UPDATE sample_bookings
+                SET
+                    preparation_status = 'Missing',
+                    missing_reported_at = NOW(),
+                    missing_note = %s,
+                    updated_at = NOW()
+                WHERE id = %s;
+                """,
+                (
+                    missing_note,
+                    booking_id,
+                ),
+            )
+
+            # -------------------------------------------------
+            # The asset itself is now Lost.
+            #
+            # We no longer claim it is physically at the
+            # expected sample-room location.
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                UPDATE sample_master
+                SET
+                    asset_state = 'Lost',
+                    current_location_id = NULL,
+                    updated_at = NOW()
+                WHERE id = %s;
+                """,
+                (item["sample_record_id"],),
+            )
+
+            # -------------------------------------------------
+            # Record the missing event.
+            # -------------------------------------------------
+
+            if item["location_code"]:
+                expected_location = (
+                    f"{item['location_code']} - "
+                    f"{item['location_name']}"
+                )
+            else:
+                expected_location = (
+                    "No recorded location"
+                )
+
+            event_details = (
+                f"Reported missing while preparing "
+                f"booking {item['booking_number']}. "
+                f"Expected location: "
+                f"{expected_location}. "
+                f"Note: {missing_note}"
+            )
+
+            cur.execute(
+                """
+                INSERT INTO sample_events (
+                    sample_record_id,
+                    event_type,
+                    event_date,
+                    title,
+                    details,
+                    previous_location_id,
+                    new_location_id,
+                    created_at
+                )
+                VALUES (
+                    %s,
+                    'SAMPLE_MISSING',
+                    NOW(),
+                    'Sample Reported Missing',
+                    %s,
+                    %s,
+                    NULL,
+                    NOW()
+                );
+                """,
+                (
+                    item["sample_record_id"],
+                    event_details,
+                    previous_location_id,
+                ),
+            )
+
+        conn.commit()
+
+    return {
+        "booking_id": booking_id,
+        "sample_record_id": (
+            item["sample_record_id"]
+        ),
+        "sample_id": item["sample_id"],
+        "booking_number": (
+            item["booking_number"]
+        ),
+        "preparation_status": "Missing",
+    }
+
+# -------------------------------------------------
+# SUMMIT BOOKING PREPARATION & SEND EMAIL NOTIFICATION
+# -------------------------------------------------
+def submit_booking_preparation(
+    booking_group_id,
+):
+    """
+    Complete the preparation stage for a booking.
+
+    All active booking items must have been processed.
+    Missing items are allowed and do not block the booking.
+
+    The booking becomes Ready for Collection.
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+
+            # -------------------------------------------------
+            # Lock booking group.
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    booking_number,
+                    booked_by,
+                    booking_status
+                FROM sample_booking_groups
+                WHERE id = %s
+                FOR UPDATE;
+                """,
+                (booking_group_id,),
+            )
+
+            booking_group = cur.fetchone()
+
+            if not booking_group:
+                raise ValueError(
+                    "Booking group could not be found."
+                )
+
+            if (
+                booking_group["booking_status"]
+                != "Preparing"
+            ):
+                raise ValueError(
+                    (
+                        "Only bookings currently being "
+                        "prepared can be submitted."
+                    )
+                )
+
+            # -------------------------------------------------
+            # Lock active booking items.
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                SELECT
+                    sb.id AS booking_id,
+                    sb.sample_record_id,
+                    sb.preparation_status,
+                    sb.missing_note,
+
+                    sm.sample_id,
+                    sm.sample_name,
+
+                    sl.code AS location_code,
+                    sl.name AS location_name
+
+                FROM sample_bookings sb
+
+                JOIN sample_master sm
+                    ON sm.id =
+                       sb.sample_record_id
+
+                LEFT JOIN sample_locations sl
+                    ON sl.id =
+                       sm.current_location_id
+
+                WHERE sb.booking_group_id = %s
+                  AND sb.booking_status != 'Cancelled'
+
+                ORDER BY
+                    sm.sample_name,
+                    sm.sample_id
+
+                FOR UPDATE OF sb;
+                """,
+                (booking_group_id,),
+            )
+
+            items = cur.fetchall()
+
+            if not items:
+                raise ValueError(
+                    "This booking has no active items."
+                )
+
+            # -------------------------------------------------
+            # Make sure Operations has dealt with every item.
+            # -------------------------------------------------
+
+            incomplete_items = [
+                item
+                for item in items
+                if item["preparation_status"]
+                == "Not Prepared"
+            ]
+
+            if incomplete_items:
+                raise ValueError(
+                    (
+                        f"{len(incomplete_items)} booking "
+                        "item(s) still need to be prepared "
+                        "or reported missing."
+                    )
+                )
+
+            allowed_statuses = {
+                "Prepared",
+                "Missing",
+                "Replaced",
+            }
+
+            invalid_items = [
+                item
+                for item in items
+                if item["preparation_status"]
+                not in allowed_statuses
+            ]
+
+            if invalid_items:
+                raise ValueError(
+                    (
+                        "One or more booking items have an "
+                        "invalid preparation status."
+                    )
+                )
+
+            # -------------------------------------------------
+            # Booking is now ready for collection.
+            # -------------------------------------------------
+
+            cur.execute(
+                """
+                UPDATE sample_booking_groups
+                SET
+                    booking_status =
+                        'Ready for Collection',
+                    ready_for_collection_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = %s;
+                """,
+                (booking_group_id,),
+            )
+
+            # Only items actually being supplied progress
+            # with the physical booking lifecycle.
+            cur.execute(
+                """
+                UPDATE sample_bookings
+                SET
+                    booking_status =
+                        'Ready for Collection',
+                    updated_at = NOW()
+                WHERE booking_group_id = %s
+                  AND booking_status != 'Cancelled'
+                  AND preparation_status IN (
+                      'Prepared',
+                      'Replaced'
+                  );
+                """,
+                (booking_group_id,),
+            )
+
+            # Missing items deliberately remain attached
+            # to the booking for historical/audit purposes.
+
+            missing_items = [
+                item
+                for item in items
+                if item["preparation_status"]
+                == "Missing"
+            ]
+
+        conn.commit()
+
+    return {
+        "booking_group_id": booking_group_id,
+        "booking_number": (
+            booking_group["booking_number"]
+        ),
+        "booked_by": (
+            booking_group["booked_by"]
+        ),
+        "booking_status": (
+            "Ready for Collection"
+        ),
+        "total_items": len(items),
+        "missing_items": missing_items,
+        "has_missing_items": bool(
+            missing_items
+        ),
+    }
 
 
 # =============================================================================

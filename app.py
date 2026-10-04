@@ -57,6 +57,10 @@ from pages_ui.refurbished_customer_view import (
     render_refurbished_customer_view,
 )
 
+from pages_ui.sample_booking_preparation import (
+    render_booking_preparation_page,
+)
+
 from utils.qr import build_sample_qr
 from utils.tag import build_warehouse_tag
 
@@ -801,6 +805,9 @@ elif page == "Book Samples":
 
 elif page == "Bookings & Returns":
     render_sample_booking_management(hero)
+
+elif page == "Booking Preparation":
+    render_booking_preparation_page(hero)
 
 elif page == "Sample Return":
     render_sample_return_page(hero)

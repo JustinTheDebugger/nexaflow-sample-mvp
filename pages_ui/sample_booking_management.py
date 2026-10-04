@@ -119,15 +119,9 @@ def render_sample_booking_management(hero):
     # Load page data
     # ---------------------------------------------------------
 
-    upcoming_bookings = []
     booking_history = []
 
     try:
-        upcoming_bookings = get_booking_groups(
-            status="Reserved",
-            upcoming_only=True,
-        )
-
         booking_history = get_booking_groups()
 
     except Exception as exc:
@@ -135,9 +129,24 @@ def render_sample_booking_management(hero):
             f"Could not load booking management data: {exc}"
         )
 
+
     # ---------------------------------------------------------
-    # Derived lists
+    # Derived booking lists
     # ---------------------------------------------------------
+
+    active_booking_statuses = {
+        "Reserved",
+        "Preparing",
+        "Ready for Collection",
+        "Checked Out",
+    }
+
+    upcoming_bookings = [
+        booking
+        for booking in booking_history
+        if booking["booking_status"]
+        in active_booking_statuses
+    ]
 
     historical_bookings = [
         booking
@@ -148,6 +157,20 @@ def render_sample_booking_management(hero):
             "Completed",
         )
     ]
+
+
+    # TEMPORARY DEBUG
+    # st.write(
+    #     "DEBUG booking statuses:",
+    #     [
+    #         (
+    #             booking["booking_number"],
+    #             booking["booking_status"],
+    #         )
+    #         for booking in booking_history
+    #     ],
+    # )
+
 
     # ---------------------------------------------------------
     # Tabs
@@ -250,22 +273,39 @@ def render_sample_booking_management(hero):
                             )
                         ):
 
-                            if st.button(
-                                "View",
-                                key=(
-                                    f"view_booking_"
-                                    f"{booking['booking_group_id']}"
-                                ),
-                                width="stretch",
-                            ):
+                            if booking["booking_status"] == "Reserved":
+                                if st.button(
+                                    "Prepare Items",
+                                    type="primary",
+                                    width="content",
+                                    key=f"prepare_booking_{booking['booking_group_id']}",
+                                ):
+                                    st.session_state[
+                                        "selected_preparation_booking_group_id"
+                                    ] = booking["booking_group_id"]
 
-                                st.session_state[
-                                    "selected_booking_group_id"
-                                ] = booking[
-                                    "booking_group_id"
-                                ]
+                                    st.session_state[
+                                        "workflow_page"
+                                    ] = "Booking Preparation"
 
-                                st.rerun()
+                                    st.rerun()
+
+                            elif booking["booking_status"] == "Preparing":
+                                if st.button(
+                                    "Continue Preparing",
+                                    type="primary",
+                                    width="content",
+                                    key=f"continue_preparation_{booking['booking_group_id']}",
+                                ):
+                                    st.session_state[
+                                        "selected_preparation_booking_group_id"
+                                    ] = booking["booking_group_id"]
+
+                                    st.session_state[
+                                        "workflow_page"
+                                    ] = "Booking Preparation"
+
+                                    st.rerun()
 
 
                     # -----------------------------------------
@@ -726,7 +766,7 @@ def render_sample_booking_management(hero):
                 # Return Inspection
                 # -------------------------------------------------
 
-                if booking["booking_status"] == "Reserved":
+                if booking["booking_status"] == "Checked Out":
 
                     st.markdown("### Return Inspection")
 
