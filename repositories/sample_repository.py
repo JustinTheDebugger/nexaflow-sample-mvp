@@ -4931,3 +4931,63 @@ def get_refurbished_customer_media(
             )
 
             return cur.fetchall()
+        
+
+def get_sample_activity(
+    sample_record_id,
+):
+    """
+    Return the complete activity history for a sample.
+
+    Events are returned newest first and include
+    readable previous/new location details.
+    """
+
+    query = """
+        SELECT
+            se.id,
+            se.sample_record_id,
+            se.event_type,
+            se.event_date,
+            se.title,
+            se.details,
+            se.actor,
+            se.team,
+
+            se.previous_location_id,
+            previous_location.code
+                AS previous_location_code,
+            previous_location.name
+                AS previous_location_name,
+
+            se.new_location_id,
+            new_location.code
+                AS new_location_code,
+            new_location.name
+                AS new_location_name
+
+        FROM sample_events se
+
+        LEFT JOIN sample_locations previous_location
+            ON previous_location.id =
+               se.previous_location_id
+
+        LEFT JOIN sample_locations new_location
+            ON new_location.id =
+               se.new_location_id
+
+        WHERE se.sample_record_id = %s
+
+        ORDER BY
+            se.event_date DESC,
+            se.created_at DESC;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                (sample_record_id,),
+            )
+
+            return cur.fetchall()

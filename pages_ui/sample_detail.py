@@ -4,12 +4,15 @@ from repositories.sample_repository import (
     get_active_products,
     get_categories,
     get_sample_by_record_id,
-    get_sample_events,
     get_sample_products,
     get_sample_types,
     link_sample_product,
     unlink_sample_product,
     update_sample_details,
+)
+
+from pages_ui.sample_activity import (
+    render_sample_activity,
 )
 
 from utils.qr import build_sample_qr
@@ -53,10 +56,6 @@ def render_sample_detail(hero):
 
     try:
         sample = get_sample_by_record_id(
-            sample_record_id
-        )
-
-        events = get_sample_events(
             sample_record_id
         )
 
@@ -494,62 +493,21 @@ def render_sample_detail(hero):
     # ---------------------------------------------------------
 
     with tabs[0]:
-        if not events:
-            st.info(
-                "No lifecycle events have been recorded."
+        st.markdown(
+            "### Sample Activity"
+        )
+
+        st.caption(
+            (
+                "Complete history of this sample, including "
+                "bookings, movements, returns, condition "
+                "changes and lifecycle events."
             )
+        )
 
-        else:
-            for event in events:
-                event_date = event[
-                    "event_date"
-                ]
-
-                st.markdown(
-                    f"**{event['title']}**"
-                )
-
-                st.caption(
-                    event_date.strftime(
-                        "%d %b %Y · %H:%M"
-                    )
-                )
-
-                if event["details"]:
-                    st.write(
-                        event["details"]
-                    )
-
-                movement_parts = []
-
-                if event[
-                    "previous_location_name"
-                ]:
-                    movement_parts.append(
-                        "From: "
-                        + event[
-                            "previous_location_name"
-                        ]
-                    )
-
-                if event[
-                    "new_location_name"
-                ]:
-                    movement_parts.append(
-                        "To: "
-                        + event[
-                            "new_location_name"
-                        ]
-                    )
-
-                if movement_parts:
-                    st.caption(
-                        " · ".join(
-                            movement_parts
-                        )
-                    )
-
-                st.markdown("---")
+        render_sample_activity(
+            sample["id"]
+        )
 
     # ---------------------------------------------------------
     # Details Tab
