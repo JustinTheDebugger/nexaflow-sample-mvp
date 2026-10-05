@@ -307,6 +307,29 @@ def render_sample_booking_management(hero):
 
                                     st.rerun()
 
+                            elif (
+                                booking["booking_status"]
+                                == "Ready for Collection"
+                            ):
+                                if st.button(
+                                    "Check Out",
+                                    type="primary",
+                                    width="content",
+                                    key=(
+                                        "checkout_booking_"
+                                        f"{booking['booking_group_id']}"
+                                    ),
+                                ):
+                                    st.session_state[
+                                        "selected_preparation_booking_group_id"
+                                    ] = booking["booking_group_id"]
+
+                                    st.session_state[
+                                        "workflow_page"
+                                    ] = "Booking Preparation"
+
+                                    st.rerun()
+
 
                     # -----------------------------------------
                     # Return Samples

@@ -7,6 +7,12 @@ from repositories.sample_repository import (
     start_booking_preparation,
     submit_booking_preparation,
     undo_booking_item_prepared,
+    checkout_booking,
+    mark_booking_item_cannot_supply,
+)
+
+from services.email_service import (
+    send_missing_preparation_notification,
 )
 
 
@@ -56,6 +62,27 @@ def render_booking_preparation_page(hero):
         )
         return
 
+
+    notification = st.session_state.pop(
+        "preparation_notification",
+        None,
+    )
+
+    if notification:
+
+        if notification.get("sent"):
+            st.success(
+                "Admin was notified about the missing sample."
+            )
+
+        else:
+            st.warning(
+                (
+                    "The booking was prepared successfully, "
+                    "but the Admin notification was not sent."
+                )
+            )
+
     booking = data["booking"]
     items = data["items"]
 
@@ -66,6 +93,14 @@ def render_booking_preparation_page(hero):
             "available items for collection."
         ),
     )
+
+    checkout_success = st.session_state.pop(
+        "checkout_success",
+        None,
+    )
+
+    if checkout_success:
+        st.success(checkout_success)
 
     # ---------------------------------------------------------
     # Back
@@ -178,6 +213,18 @@ def render_booking_preparation_page(hero):
         == "Not Prepared"
     )
 
+    cannot_supply_count = sum(
+        1
+        for item in items
+        if item["preparation_status"]
+        == "Cannot Supply"
+    )
+
+    not_supplied_count = (
+        missing_count
+        + cannot_supply_count
+    )
+
     metric1, metric2, metric3 = st.columns(3)
 
     metric1.metric(
@@ -237,100 +284,200 @@ def render_booking_preparation_page(hero):
 
             if status == "Not Prepared":
 
-                action_col1, action_col2 = (
-                    st.columns(2)
+                sample_available = (
+                    item["asset_state"] == "Active"
+                    and item["condition"] == "Good"
                 )
 
-                with action_col1:
+                # -----------------------------------------------------
+                # Sample no longer available
+                # -----------------------------------------------------
+
+                if not sample_available:
+
+                    st.error(
+                        "This sample is not available for preparation."
+                    )
+
+                    unavailable_col1, unavailable_col2 = (
+                        st.columns(2)
+                    )
+
+                    with unavailable_col1:
+                        st.caption("Asset State")
+                        st.write(item["asset_state"])
+
+                    with unavailable_col2:
+                        st.caption("Condition")
+                        st.write(item["condition"])
+
+                    st.warning(
+                        (
+                            "The sample was available when the booking "
+                            "was created, but its condition or lifecycle "
+                            "state has since changed."
+                        )
+                    )
 
                     if st.button(
-                        "Mark Prepared",
-                        type="primary",
-                        width="stretch",
+                        "Cannot Supply",
+                        width="content",
                         key=(
-                            "prepare_item_"
-                            f"{item['booking_id']}"
-                        ),
-                    ):
-                        try:
-                            mark_booking_item_prepared(
-                                item["booking_id"]
-                            )
-
-                            st.rerun()
-
-                        except Exception as exc:
-                            st.error(str(exc))
-
-                with action_col2:
-
-                    if st.button(
-                        "Report Missing",
-                        width="stretch",
-                        key=(
-                            "report_missing_"
+                            "cannot_supply_"
                             f"{item['booking_id']}"
                         ),
                     ):
                         st.session_state[
-                            "missing_booking_item_id"
+                            "cannot_supply_booking_id"
                         ] = item["booking_id"]
 
                         st.rerun()
 
-                # Missing form only appears for
-                # the selected item.
-                if (
-                    st.session_state.get(
-                        "missing_booking_item_id"
-                    )
-                    == item["booking_id"]
-                ):
-
-                    with st.form(
-                        (
-                            "missing_item_form_"
-                            f"{item['booking_id']}"
+                    if (
+                        st.session_state.get(
+                            "cannot_supply_booking_id"
                         )
+                        == item["booking_id"]
                     ):
-                        st.warning(
+
+                        with st.form(
                             (
-                                "Report this sample as missing "
-                                "from its expected location."
+                                "cannot_supply_form_"
+                                f"{item['booking_id']}"
                             )
-                        )
+                        ):
 
-                        missing_note = st.text_area(
-                            "Missing note *",
-                            placeholder=(
-                                "Example: Could not locate "
-                                "sample on the S1 shelf."
-                            ),
-                        )
+                            reason = st.text_area(
+                                "Reason *",
+                                value=(
+                                    f"Sample is "
+                                    f"{item['asset_state']} / "
+                                    f"{item['condition']}."
+                                ),
+                            )
 
-                        confirm_missing = (
-                            st.form_submit_button(
-                                "Confirm Missing",
+                            confirm = st.form_submit_button(
+                                "Confirm Cannot Supply",
                                 type="primary",
                             )
-                        )
 
-                        if confirm_missing:
+                            if confirm:
+                                try:
+                                    mark_booking_item_cannot_supply(
+                                        item["booking_id"],
+                                        reason,
+                                    )
+
+                                    st.session_state.pop(
+                                        "cannot_supply_booking_id",
+                                        None,
+                                    )
+
+                                    st.rerun()
+
+                                except Exception as exc:
+                                    st.error(str(exc))
+
+                # -----------------------------------------------------
+                # Normal preparation
+                # -----------------------------------------------------
+
+                else:
+
+                    action_col1, action_col2 = st.columns(2)
+
+                    with action_col1:
+
+                        if st.button(
+                            "Mark Prepared",
+                            type="primary",
+                            width="stretch",
+                            key=(
+                                "prepare_item_"
+                                f"{item['booking_id']}"
+                            ),
+                        ):
                             try:
-                                report_booking_item_missing(
-                                    item["booking_id"],
-                                    missing_note,
-                                )
-
-                                st.session_state.pop(
-                                    "missing_booking_item_id",
-                                    None,
+                                mark_booking_item_prepared(
+                                    item["booking_id"]
                                 )
 
                                 st.rerun()
 
                             except Exception as exc:
                                 st.error(str(exc))
+
+                    with action_col2:
+
+                        if st.button(
+                            "Report Missing",
+                            width="stretch",
+                            key=(
+                                "report_missing_"
+                                f"{item['booking_id']}"
+                            ),
+                        ):
+                            st.session_state[
+                                "missing_booking_item_id"
+                            ] = item["booking_id"]
+
+                            st.rerun()
+
+                    # -------------------------------------------------
+                    # Missing report form
+                    # -------------------------------------------------
+
+                    if (
+                        st.session_state.get(
+                            "missing_booking_item_id"
+                        )
+                        == item["booking_id"]
+                    ):
+
+                        with st.form(
+                            (
+                                "missing_item_form_"
+                                f"{item['booking_id']}"
+                            )
+                        ):
+                            st.warning(
+                                (
+                                    "Report this sample as missing "
+                                    "from its expected location."
+                                )
+                            )
+
+                            missing_note = st.text_area(
+                                "Missing note *",
+                                placeholder=(
+                                    "Example: Could not locate "
+                                    "sample on the S1 shelf."
+                                ),
+                            )
+
+                            confirm_missing = (
+                                st.form_submit_button(
+                                    "Confirm Missing",
+                                    type="primary",
+                                )
+                            )
+
+                            if confirm_missing:
+                                try:
+                                    report_booking_item_missing(
+                                        item["booking_id"],
+                                        missing_note,
+                                    )
+
+                                    st.session_state.pop(
+                                        "missing_booking_item_id",
+                                        None,
+                                    )
+
+                                    st.rerun()
+
+                                except Exception as exc:
+                                    st.error(str(exc))
 
             # ---------------------------------------------
             # Prepared
@@ -411,6 +558,23 @@ def render_booking_preparation_page(hero):
                         )
                     )
 
+            # ---------------------------------------------
+            # Cannot supply
+            # ---------------------------------------------
+
+            elif status == "Cannot Supply":
+
+                st.warning(
+                    "This requested sample will not be supplied."
+                )
+
+                st.write(
+                    (
+                        f"**Reason:** "
+                        f"{item.get('missing_note') or 'Unavailable'}"
+                    )
+                )
+
     # ---------------------------------------------------------
     # Submit preparation
     # ---------------------------------------------------------
@@ -452,15 +616,47 @@ def render_booking_preparation_page(hero):
                 key="submit_booking_preparation",
             ):
                 try:
-                    result = (
-                        submit_booking_preparation(
-                            booking_group_id
-                        )
+                    result = submit_booking_preparation(
+                        booking_group_id
                     )
 
                     st.session_state[
                         "preparation_result"
                     ] = result
+
+
+                    # -------------------------------------------------
+                    # Missing sample notification
+                    # -------------------------------------------------
+
+                    if result["has_missing_items"]:
+                        try:
+                            notification = (
+                                send_missing_preparation_notification(
+                                    booking_number=result[
+                                        "booking_number"
+                                    ],
+                                    booked_by=result["booked_by"],
+                                    missing_items=result[
+                                        "missing_items"
+                                    ],
+                                )
+                            )
+
+                            st.session_state[
+                                "preparation_notification"
+                            ] = notification
+
+                        except Exception as exc:
+                            # Notification failure must never undo
+                            # successful booking preparation.
+                            st.session_state[
+                                "preparation_notification"
+                            ] = {
+                                "sent": False,
+                                "reason": str(exc),
+                            }
+
 
                     st.rerun()
 
@@ -510,3 +706,90 @@ def render_booking_preparation_page(hero):
                     "C1 — Collection / Dispatch Area."
                 )
             )
+
+        st.divider()
+
+        st.markdown("### Collection & Check Out")
+
+        st.info(
+            (
+                "The requester should verify the supplied "
+                "samples before they leave the collection area."
+            )
+        )
+
+        st.write(
+            f"**Collected by:** {booking['booked_by']}"
+        )
+
+        st.write(
+            (
+                "**Supplied samples:** "
+                f"{prepared_count}"
+            )
+        )
+
+        if missing_count:
+            st.write(
+                (
+                    "**Not supplied:** "
+                    f"{missing_count} missing"
+                )
+            )
+
+        confirm_checkout = st.checkbox(
+            (
+                "I confirm the requester has collected "
+                "the supplied samples."
+            ),
+            key=(
+                "confirm_checkout_"
+                f"{booking_group_id}"
+            ),
+        )
+
+        if st.button(
+            "Confirm Check Out",
+            type="primary",
+            width="stretch",
+            disabled=not confirm_checkout,
+            key=(
+                "checkout_booking_"
+                f"{booking_group_id}"
+            ),
+        ):
+            try:
+                result = checkout_booking(
+                    booking_group_id
+                )
+
+                st.session_state[
+                    "checkout_success"
+                ] = (
+                    f"{result['booking_number']} checked out "
+                    f"successfully. "
+                    f"{result['checked_out_count']} sample(s) "
+                    f"issued to {result['booked_by']}."
+                )
+
+                st.rerun()
+
+            except Exception as exc:
+                st.error(str(exc))
+
+    
+    if booking["booking_status"] == "Checked Out":
+
+        st.success(
+            (
+                "This booking has been checked out "
+                f"to {booking['booked_by']}."
+            )
+        )
+
+        st.info(
+            (
+                "The supplied samples are now assigned "
+                "to the requester and are awaiting return."
+            )
+        )
