@@ -520,13 +520,6 @@ def render_booking_preparation_page(hero):
 
             elif status == "Missing":
 
-                st.warning(
-                    (
-                        "This sample was reported missing. "
-                        "Preparation can continue without it."
-                    )
-                )
-
                 if item.get("missing_note"):
                     st.caption(
                         f"Note: {item['missing_note']}"
@@ -564,11 +557,7 @@ def render_booking_preparation_page(hero):
 
             elif status == "Cannot Supply":
 
-                st.warning(
-                    "This requested sample will not be supplied."
-                )
-
-                st.write(
+                st.caption(
                     (
                         f"**Reason:** "
                         f"{item.get('missing_note') or 'Unavailable'}"
@@ -595,22 +584,27 @@ def render_booking_preparation_page(hero):
 
         else:
 
-            if missing_count:
-                st.warning(
+            if prepared_count <= 0:
+
+                st.info(
                     (
-                        f"{missing_count} sample"
-                        f"{'s' if missing_count != 1 else ''} "
-                        "will remain recorded as missing. "
-                        "This will not prevent collection."
+                        "0 items supplied. Finishing preparation "
+                        "will close this booking."
                     )
                 )
+
             else:
+
                 st.success(
-                    "All booked samples are prepared."
+                    (
+                        f"{prepared_count} item"
+                        f"{'s' if prepared_count != 1 else ''} "
+                        "prepared for collection."
+                    )
                 )
 
             if st.button(
-                "Submit Prepared Samples",
+                "Finish Preparation",
                 type="primary",
                 width="stretch",
                 key="submit_booking_preparation",

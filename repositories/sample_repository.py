@@ -2934,10 +2934,16 @@ def submit_booking_preparation(
     """
     Complete the preparation stage for a booking.
 
-    All active booking items must have been processed.
-    Missing items are allowed and do not block the booking.
+    Every active booking item must have been processed.
 
-    The booking becomes Ready for Collection.
+    If at least one sample will be supplied:
+        → Ready for Collection
+
+    If no samples can be supplied:
+        → Closed - Not Supplied
+
+    Missing and Cannot Supply items remain attached to the
+    booking for historical and audit purposes.
     """
 
     with get_connection() as conn:
@@ -2975,12 +2981,12 @@ def submit_booking_preparation(
                 raise ValueError(
                     (
                         "Only bookings currently being "
-                        "prepared can be submitted."
+                        "prepared can be finished."
                     )
                 )
 
             # -------------------------------------------------
-            # Lock active booking items.
+            # Lock booking items.
             # -------------------------------------------------
 
             cur.execute(
@@ -3027,8 +3033,15 @@ def submit_booking_preparation(
                 )
 
             # -------------------------------------------------
-            # Make sure Operations has dealt with every item.
+            # Check every item has been processed.
             # -------------------------------------------------
+
+            allowed_statuses = {
+                "Prepared",
+                "Missing",
+                "Replaced",
+                "Cannot Supply",
+            }
 
             incomplete_items = [
                 item
@@ -3041,17 +3054,9 @@ def submit_booking_preparation(
                 raise ValueError(
                     (
                         f"{len(incomplete_items)} booking "
-                        "item(s) still need to be prepared "
-                        "or reported missing."
+                        "item(s) still need to be processed."
                     )
                 )
-
-            allowed_statuses = {
-                "Prepared",
-                "Missing",
-                "Replaced",
-                "Cannot Supply",
-            }
 
             invalid_items = [
                 item
@@ -3069,72 +3074,158 @@ def submit_booking_preparation(
                 )
 
             # -------------------------------------------------
-            # Booking is now ready for collection.
+            # Separate supplied items from exceptions.
             # -------------------------------------------------
 
-            cur.execute(
-                """
-                UPDATE sample_booking_groups
-                SET
-                    booking_status =
-                        'Ready for Collection',
-                    ready_for_collection_at = NOW(),
-                    updated_at = NOW()
-                WHERE id = %s;
-                """,
-                (booking_group_id,),
-            )
-
-            # Only items actually being supplied progress
-            # with the physical booking lifecycle.
-            cur.execute(
-                """
-                UPDATE sample_bookings
-                SET
-                    booking_status =
-                        'Ready for Collection',
-                    updated_at = NOW()
-                WHERE booking_group_id = %s
-                  AND booking_status != 'Cancelled'
-                  AND preparation_status IN (
-                      'Prepared',
-                      'Replaced'
-                  );
-                """,
-                (booking_group_id,),
-            )
-
-            # Missing items deliberately remain attached
-            # to the booking for historical/audit purposes.
-
-            exception_items = [
+            supplied_items = [
                 item
                 for item in items
                 if item["preparation_status"]
-                in {
+                in (
+                    "Prepared",
+                    "Replaced",
+                )
+            ]
+
+            missing_items = [
+                item
+                for item in items
+                if item["preparation_status"]
+                == "Missing"
+            ]
+
+            cannot_supply_items = [
+                item
+                for item in items
+                if item["preparation_status"]
+                == "Cannot Supply"
+            ]
+
+            exception_items = (
+                missing_items
+                + cannot_supply_items
+            )
+
+            # -------------------------------------------------
+            # Decide where the booking goes next.
+            # -------------------------------------------------
+
+            if supplied_items:
+
+                final_status = (
+                    "Ready for Collection"
+                )
+
+                cur.execute(
+                    """
+                    UPDATE sample_booking_groups
+                    SET
+                        booking_status =
+                            'Ready for Collection',
+                        ready_for_collection_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = %s;
+                    """,
+                    (booking_group_id,),
+                )
+
+            else:
+
+                final_status = (
+                    "Closed - Not Supplied"
+                )
+
+                cur.execute(
+                    """
+                    UPDATE sample_booking_groups
+                    SET
+                        booking_status =
+                            'Closed - Not Supplied',
+                        ready_for_collection_at = NULL,
+                        updated_at = NOW()
+                    WHERE id = %s;
+                    """,
+                    (booking_group_id,),
+                )
+
+            # -------------------------------------------------
+            # Update item-level booking statuses.
+            # -------------------------------------------------
+
+            for item in items:
+
+                preparation_status = (
+                    item["preparation_status"]
+                )
+
+                if preparation_status in (
+                    "Prepared",
+                    "Replaced",
+                ):
+                    item_booking_status = (
+                        "Ready for Collection"
+                    )
+
+                elif preparation_status in (
                     "Missing",
                     "Cannot Supply",
-                }
-            ]
+                ):
+                    item_booking_status = (
+                        "Not Supplied"
+                    )
+
+                else:
+                    continue
+
+                cur.execute(
+                    """
+                    UPDATE sample_bookings
+                    SET
+                        booking_status = %s,
+                        updated_at = NOW()
+                    WHERE id = %s;
+                    """,
+                    (
+                        item_booking_status,
+                        item["booking_id"],
+                    ),
+                )
 
         conn.commit()
 
     return {
-        "booking_group_id": booking_group_id,
-        "booking_number": booking_group["booking_number"],
-        "booked_by": booking_group["booked_by"],
-        "booking_status": "Ready for Collection",
-        "total_items": len(items),
-        "missing_items": [
-            item
-            for item in exception_items
-            if item["preparation_status"] == "Missing"
-        ],
-        "exception_items": exception_items,
-        "has_missing_items": any(
-            item["preparation_status"] == "Missing"
-            for item in exception_items
-        ),
+        "booking_group_id":
+            booking_group_id,
+
+        "booking_number":
+            booking_group["booking_number"],
+
+        "booked_by":
+            booking_group["booked_by"],
+
+        "booking_status":
+            final_status,
+
+        "total_items":
+            len(items),
+
+        "supplied_count":
+            len(supplied_items),
+
+        "missing_items":
+            missing_items,
+
+        "cannot_supply_items":
+            cannot_supply_items,
+
+        "exception_items":
+            exception_items,
+
+        "has_missing_items":
+            bool(missing_items),
+
+        "has_exceptions":
+            bool(exception_items),
     }
 
 
