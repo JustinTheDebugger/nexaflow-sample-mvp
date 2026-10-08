@@ -9,6 +9,7 @@ from repositories.sample_repository import (
     get_booking_groups,
     get_booking_return_checks,
     save_sample_return_check,
+    get_booking_history_items,
 )
 
 from utils.booking_confirmation import (
@@ -155,6 +156,7 @@ def render_sample_booking_management(hero):
         in (
             "Cancelled",
             "Completed",
+            "Closed - Not Supplied",
         )
     ]
 
@@ -333,37 +335,40 @@ def render_sample_booking_management(hero):
 
                     # -----------------------------------------
                     # Return Samples
+                    # Only available after checkout
                     # -----------------------------------------
 
                     with col5:
 
-                        with st.container(
-                            key=(
-                                f"booking_return_"
-                                f"{booking['booking_group_id']}"
-                            )
-                        ):
+                        if booking["booking_status"] == "Checked Out":
 
-                            if st.button(
-                                "Return Samples",
+                            with st.container(
                                 key=(
-                                    f"return_booking_"
+                                    f"booking_return_"
                                     f"{booking['booking_group_id']}"
-                                ),
-                                width="stretch",
+                                )
                             ):
 
-                                st.session_state[
-                                    "selected_return_booking_group_id"
-                                ] = str(
-                                    booking["booking_group_id"]
-                                )
+                                if st.button(
+                                    "Return Samples",
+                                    key=(
+                                        f"return_booking_"
+                                        f"{booking['booking_group_id']}"
+                                    ),
+                                    width="stretch",
+                                ):
 
-                                st.session_state[
-                                    "workflow_page"
-                                ] = "Sample Return"
+                                    st.session_state[
+                                        "selected_return_booking_group_id"
+                                    ] = str(
+                                        booking["booking_group_id"]
+                                    )
 
-                                st.rerun()
+                                    st.session_state[
+                                        "workflow_page"
+                                    ] = "Sample Return"
+
+                                    st.rerun()
 
 
                     # -----------------------------------------
@@ -372,59 +377,64 @@ def render_sample_booking_management(hero):
 
                     with col6:
 
-                        try:
+                        if booking["booking_status"] in (
+                            "Reserved",
+                            "Preparing",
+                        ):
 
-                            print_details = (
-                                get_booking_group_details(
-                                    booking[
-                                        "booking_group_id"
-                                    ]
-                                )
-                            )
+                            try:
 
-                            if print_details:
-
-                                pdf_bytes = (
-                                    generate_booking_confirmation_pdf(
-                                        print_details["booking"],
-                                        print_details["samples"],
+                                print_details = (
+                                    get_booking_group_details(
+                                        booking[
+                                            "booking_group_id"
+                                        ]
                                     )
                                 )
 
-                                with st.container(
-                                    key=(
-                                        f"booking_row_print_"
-                                        f"{booking['booking_group_id']}"
-                                    )
-                                ):
+                                if print_details:
 
-                                    st.download_button(
-                                        "Print",
-                                        data=pdf_bytes,
-                                        file_name=(
-                                            f"{booking['booking_number']}_"
-                                            f"Booking_Confirmation.pdf"
-                                        ),
-                                        mime="application/pdf",
+                                    pdf_bytes = (
+                                        generate_booking_confirmation_pdf(
+                                            print_details["booking"],
+                                            print_details["samples"],
+                                        )
+                                    )
+
+                                    with st.container(
                                         key=(
-                                            f"print_booking_row_"
+                                            f"booking_row_print_"
                                             f"{booking['booking_group_id']}"
-                                        ),
-                                        width="stretch",
-                                    )
+                                        )
+                                    ):
 
-                        except Exception as exc:
+                                        st.download_button(
+                                            "Print",
+                                            data=pdf_bytes,
+                                            file_name=(
+                                                f"{booking['booking_number']}_"
+                                                f"Booking_Confirmation.pdf"
+                                            ),
+                                            mime="application/pdf",
+                                            key=(
+                                                f"print_booking_row_"
+                                                f"{booking['booking_group_id']}"
+                                            ),
+                                            width="stretch",
+                                        )
 
-                            st.button(
-                                "Print PDF",
-                                disabled=True,
-                                key=(
-                                    f"print_booking_error_"
-                                    f"{booking['booking_group_id']}"
-                                ),
-                                help=str(exc),
-                                width="stretch",
-                            )
+                            except Exception as exc:
+
+                                st.button(
+                                    "Print PDF",
+                                    disabled=True,
+                                    key=(
+                                        f"print_booking_error_"
+                                        f"{booking['booking_group_id']}"
+                                    ),
+                                    help=str(exc),
+                                    width="stretch",
+                                )
 
         # -------------------------------------------------
         # Booking Item Lisings
@@ -1048,81 +1058,168 @@ def render_sample_booking_management(hero):
                                         )
 
 
-    # ---------------------------------------------------------
-    # Booking History
-    # ---------------------------------------------------------
+        # ---------------------------------------------------------
+        # Booking History
+        # ---------------------------------------------------------
 
-    with tabs[1]:
+        with tabs[1]:
 
-        try:
-            booking_history = get_booking_groups()
-
-        except Exception as exc:
-            st.error(
-                f"Could not load booking history: {exc}"
-            )
-            booking_history = []
-
-        historical_bookings = [
-            booking
-            for booking in booking_history
-            if booking["booking_status"]
-            in (
-                "Cancelled",
-                "Completed",
-            )
-        ]
-
-        st.subheader(
-            f"Booking History "
-            f"({len(historical_bookings)})"
-        )
-
-        if not historical_bookings:
-            st.info(
-                "No completed or cancelled bookings."
+            st.subheader(
+                f"Booking History ({len(historical_bookings)})"
             )
 
-        else:
-            for booking in historical_bookings:
+            if not historical_bookings:
+                st.info("No booking history available.")
 
-                with st.container(border=True):
+            else:
+                for booking in historical_bookings:
 
-                    col1, col2, col3 = st.columns(
-                        [2, 3, 2]
-                    )
+                    booking_group_id = booking["booking_group_id"]
+                    booking_status = booking["booking_status"]
+                    sample_count = booking["sample_count"]
 
-                    with col1:
-                        st.write(
-                            f"**{booking['booking_number']}**"
+                    with st.container(border=True):
+
+                        # -----------------------------------------
+                        # Booking summary
+                        # -----------------------------------------
+
+                        col1, col2, col3 = st.columns(
+                            [2, 3, 2],
+                            vertical_alignment="center",
                         )
 
-                        st.caption(
-                            booking["booking_status"]
-                        )
+                        with col1:
+                            st.write(
+                                f"**{booking['booking_number']}**"
+                            )
+                            st.caption(booking_status)
 
-                    with col2:
-                        st.write(
-                            (
+                        with col2:
+                            st.write(
                                 f"{booking['start_date']:%d %b %Y}"
                                 f" → "
                                 f"{booking['end_date']:%d %b %Y}"
                             )
-                        )
+                            st.caption(booking["booked_by"])
 
-                        st.caption(
-                            booking["booked_by"]
-                        )
-
-                    with col3:
-                        sample_count = booking[
-                            "sample_count"
-                        ]
-
-                        st.write(
-                            (
-                                f"{sample_count} "
-                                f"sample"
+                        with col3:
+                            st.write(
+                                f"{sample_count} requested sample"
                                 f"{'s' if sample_count != 1 else ''}"
                             )
-                        )
+
+                        # -----------------------------------------
+                        # Individual booking outcomes
+                        # -----------------------------------------
+
+                        with st.expander(
+                            "View Booking Details",
+                            expanded=False,
+                        ):
+
+                            try:
+                                history_items = (
+                                    get_booking_history_items(
+                                        booking_group_id
+                                    )
+                                )
+
+                            except Exception as exc:
+                                st.error(
+                                    f"Could not load booking items: {exc}"
+                                )
+                                history_items = []
+
+                            if history_items:
+
+                                supplied_count = sum(
+                                    1
+                                    for item in history_items
+                                    if item["preparation_status"]
+                                    in ("Prepared", "Replaced")
+                                    and item["item_booking_status"]
+                                    != "Cancelled"
+                                )
+
+                                not_supplied_count = sum(
+                                    1
+                                    for item in history_items
+                                    if item["preparation_status"]
+                                    in ("Missing", "Cannot Supply")
+                                )
+
+                                # ---------------------------------
+                                # Summary counts
+                                # ---------------------------------
+
+                                if (
+                                    booking_status
+                                    == "Closed - Not Supplied"
+                                ):
+
+                                    m1, m2, m3 = st.columns(3)
+
+                                    m1.metric(
+                                        "Requested",
+                                        len(history_items),
+                                    )
+
+                                    m2.metric(
+                                        "Supplied",
+                                        supplied_count,
+                                    )
+
+                                    m3.metric(
+                                        "Not Supplied",
+                                        not_supplied_count,
+                                    )
+
+                                    st.caption(
+                                        "No collection or return required."
+                                    )
+
+                                # ---------------------------------
+                                # Requested items
+                                # ---------------------------------
+
+                                st.markdown("**Requested Samples**")
+
+                                for item in history_items:
+
+                                    sample_id = item["sample_id"]
+                                    sample_name = item["sample_name"]
+                                    preparation_status = (
+                                        item["preparation_status"]
+                                        or "Not Recorded"
+                                    )
+
+                                    item_col1, item_col2 = (
+                                        st.columns([4, 1])
+                                    )
+
+                                    with item_col1:
+                                        st.write(
+                                            f"**{sample_id}** — "
+                                            f"{sample_name}"
+                                        )
+
+                                    with item_col2:
+                                        st.caption(
+                                            preparation_status
+                                        )
+
+                                    if preparation_status in (
+                                        "Missing",
+                                        "Cannot Supply",
+                                    ):
+                                        if item["missing_note"]:
+                                            st.caption(
+                                                f"Reason: "
+                                                f"{item['missing_note']}"
+                                            )
+
+                            else:
+                                st.caption(
+                                    "No booking items found."
+                                )

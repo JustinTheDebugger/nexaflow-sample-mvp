@@ -3212,6 +3212,12 @@ def submit_booking_preparation(
         "supplied_count":
             len(supplied_items),
 
+        "prepared_items":
+            supplied_items,
+
+        "has_prepared_items":
+            bool(supplied_items),
+
         "missing_items":
             missing_items,
 
@@ -6468,3 +6474,28 @@ def mark_booking_item_cannot_supply(
         "sample_id": item["sample_id"],
         "preparation_status": "Cannot Supply",
     }
+
+def get_booking_history_items(booking_group_id):
+    """
+    Return the original requested samples and their
+    preparation outcomes for a booking.
+    """
+
+    query = """
+        SELECT
+            sm.sample_id,
+            sm.sample_name,
+            sb.preparation_status,
+            sb.booking_status AS item_booking_status,
+            sb.missing_note
+        FROM sample_bookings sb
+        JOIN sample_master sm
+            ON sm.id = sb.sample_record_id
+        WHERE sb.booking_group_id = %s
+        ORDER BY sm.sample_id;
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, (booking_group_id,))
+            return cur.fetchall()

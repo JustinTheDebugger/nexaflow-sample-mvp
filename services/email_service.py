@@ -1,75 +1,42 @@
 import os
+from pathlib import Path
+
+import resend
+from dotenv import load_dotenv
+
+# Load .env from the NexaFlow project root.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 
 
-def send_missing_preparation_notification(
-    *,
-    booking_number,
-    booked_by,
-    missing_items,
-):
+def deliver_email(*, to, subject, body):
     """
-    Notify Admin that one or more samples were reported
-    missing while preparing a booking.
+    Send a transactional email through Resend.
 
-    Email delivery is optional for the MVP. If no Admin
-    email address is configured, the function returns
-    without affecting the booking workflow.
+    Returns delivery submission information.
+    Raises an exception if the provider rejects the request.
     """
 
-    admin_email = os.getenv("ADMIN_NOTIFICATION_EMAIL")
+    api_key = os.getenv("RESEND_API_KEY")
+    sender = os.getenv("NEXAFLOW_FROM_EMAIL")
 
-    if not admin_email:
-        return {
-            "sent": False,
-            "reason": "ADMIN_NOTIFICATION_EMAIL not configured",
-        }
+    if not api_key:
+        raise ValueError("RESEND_API_KEY is not configured.")
 
-    missing_lines = []
+    if not sender:
+        raise ValueError("NEXAFLOW_FROM_EMAIL is not configured.")
 
-    for item in missing_items:
-        sample_id = item["sample_id"]
-        sample_name = item["sample_name"]
-        note = item.get("missing_note") or "No note provided"
+    resend.api_key = api_key
 
-        missing_lines.append(
-            (
-                f"- {sample_id} — {sample_name}\n"
-                f"  Note: {note}"
-            )
-        )
-
-    missing_text = "\n".join(missing_lines)
-
-    subject = (
-        f"Missing sample during preparation — "
-        f"{booking_number}"
-    )
-
-    body = f"""
-Booking {booking_number} was prepared with one or more
-missing samples.
-
-Requested by:
-{booked_by}
-
-Missing samples:
-{missing_text}
-
-The remaining available samples have been prepared and
-the booking is now Ready for Collection.
-
-The missing samples require Admin follow-up.
-""".strip()
-
-    # Actual email provider will be connected here.
-    #
-    # For now we return the generated notification so
-    # the booking workflow remains provider-independent.
+    response = resend.Emails.send({
+        "from": sender,
+        "to": [to],
+        "subject": subject,
+        "text": body,
+    })
 
     return {
-        "sent": False,
-        "reason": "Email provider not configured",
-        "to": admin_email,
-        "subject": subject,
-        "body": body,
+        "sent": True,
+        "provider": "resend",
+        "provider_response": response,
     }
