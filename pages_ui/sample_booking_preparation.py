@@ -12,7 +12,10 @@ from repositories.sample_repository import (
     submit_booking_preparation,
     undo_booking_item_prepared,
 )
-from services.email_service import send_missing_preparation_notification
+from services.email_service import (
+    send_missing_preparation_notification,
+    send_ready_for_collection_notification,
+)
 from utils.booking_collection_pdf import generate_collection_sheet
 
 
@@ -45,17 +48,27 @@ def render_booking_preparation_page(hero):
     booking = data["booking"]
     items = data["items"]
     status = booking["booking_status"]
+
     hero(
         f"Prepare {booking['booking_number']}",
         "Locate booked samples, prepare available items and manage collection.",
     )
 
-    notification = st.session_state.pop("preparation_notification", None)
-    if notification:
+    # Display email notification results after Streamlit reruns.
+    notifications = st.session_state.pop(
+        "preparation_notifications", {}
+    )
+
+    for recipient_type, notification in notifications.items():
+        label = "Admin" if recipient_type == "admin" else "Requester"
+
         if notification.get("sent"):
-            st.success("Admin was notified about the missing sample.")
+            st.success(f"{label} email submitted successfully.")
         else:
-            st.warning("Preparation saved, but the admin notification was not sent.")
+            st.warning(
+                f"{label} email could not be submitted: "
+                f"{notification.get('reason', 'Unknown error')}"
+            )
 
     checkout_success = st.session_state.pop("checkout_success", None)
     if checkout_success:
@@ -73,15 +86,14 @@ def render_booking_preparation_page(hero):
     st.markdown(f"**Status:** {status}")
     st.divider()
 
+    # Automatically start preparation when opening a reserved booking.
     if status == "Reserved":
-        st.info("Start preparation when you are ready to physically locate these samples.")
-        if st.button("Start Preparing", type="primary", key="start_booking_preparation"):
-            try:
-                start_booking_preparation(booking_group_id)
-                st.rerun()
-            except Exception as exc:
-                st.error(str(exc))
-        return
+        try:
+            start_booking_preparation(booking_group_id)
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Could not start preparation: {exc}")
+            return
 
     prepared_count = sum(item["preparation_status"] == "Prepared" for item in items)
     replacement_count = sum(item["preparation_status"] == "Replaced" for item in items)
@@ -226,19 +238,41 @@ def render_booking_preparation_page(hero):
                 try:
                     result = submit_booking_preparation(booking_group_id)
                     st.session_state["preparation_result"] = result
+
+                    notifications = {}
+
+                    # Notify Admin if any samples are missing.
                     if result["has_missing_items"]:
                         try:
-                            notification = send_missing_preparation_notification(
+                            notifications["admin"] = send_missing_preparation_notification(
                                 booking_number=result["booking_number"],
                                 booked_by=result["booked_by"],
                                 missing_items=result["missing_items"],
                             )
-                            st.session_state["preparation_notification"] = notification
                         except Exception as exc:
-                            st.session_state["preparation_notification"] = {
-                                "sent": False, "reason": str(exc)
+                            notifications["admin"] = {
+                                "sent": False,
+                                "reason": str(exc),
                             }
+
+                    # Notify requester if samples are prepared.
+                    if result["has_prepared_items"]:
+                        try:
+                            notifications["requester"] = send_ready_for_collection_notification(
+                                booking_number=result["booking_number"],
+                                booked_by=result["booked_by"],
+                                prepared_items=result["prepared_items"],
+                                exception_items=result["exception_items"],
+                            )
+                        except Exception as exc:
+                            notifications["requester"] = {
+                                "sent": False,
+                                "reason": str(exc),
+                            }
+
+                    st.session_state["preparation_notifications"] = notifications
                     st.rerun()
+
                 except Exception as exc:
                     st.error(str(exc))
 
