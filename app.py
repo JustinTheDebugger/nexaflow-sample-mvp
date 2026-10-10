@@ -61,6 +61,8 @@ from pages_ui.sample_booking_preparation import (
     render_booking_preparation_page,
 )
 
+from pages_ui.sample_booking_return import render_booking_return_page
+
 from utils.qr import build_sample_qr
 from utils.tag import build_warehouse_tag
 
@@ -260,12 +262,6 @@ with st.sidebar:
     st.session_state[
         "_last_sidebar_page"
     ] = selected_page
-
-    workflow_page = st.session_state.get(
-        "workflow_page"
-    )
-
-    page = workflow_page or selected_page
 
     workflow_page = st.session_state.get(
         "workflow_page"
@@ -808,6 +804,9 @@ elif page == "Bookings & Returns":
 
 elif page == "Booking Preparation":
     render_booking_preparation_page(hero)
+
+elif page == "Booking Return":
+    render_booking_return_page()
 
 elif page == "Sample Return":
     render_sample_return_page(hero)
