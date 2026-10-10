@@ -1814,6 +1814,172 @@ def checkout_booking(
         ),
     }
 
+def get_booking_return(booking_group_id):
+    """Load issued samples and previously completed returns for one booking."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id, booking_number, booked_by, booking_status
+                   FROM sample_booking_groups WHERE id = %s""",
+                (booking_group_id,),
+            )
+            booking = cur.fetchone()
+            if not booking:
+                raise ValueError("Booking group could not be found.")
+            cur.execute(
+                """SELECT sb.id AS booking_id, sb.sample_record_id,
+                          sb.booking_status, sb.preparation_status,
+                          sm.sample_id, sm.sample_name, sm.condition,
+                          sm.asset_state, sm.current_holder,
+                          sm.current_location_id, sm.origin_location_id
+                   FROM sample_bookings sb
+                   JOIN sample_master sm ON sm.id = sb.sample_record_id
+                   WHERE sb.booking_group_id = %s
+                     AND sb.booking_status IN ('Checked Out', 'Completed')
+                   ORDER BY sm.sample_id""",
+                (booking_group_id,),
+            )
+            items = cur.fetchall()
+    return {"booking": booking, "items": items}
+
+
+def return_booking_item(
+    booking_group_id,
+    booking_item_id,
+    return_condition,
+    location_id=None,
+    notes="",
+):
+    """Inspect one issued sample and atomically record its physical return."""
+    if return_condition not in ("Good", "Damaged"):
+        raise ValueError("Return condition must be Good or Damaged.")
+    notes = (notes or "").strip()
+    if return_condition == "Damaged" and not notes:
+        raise ValueError("Inspection notes are required for damaged samples.")
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id, booking_number, booking_status
+                   FROM sample_booking_groups WHERE id = %s FOR UPDATE""",
+                (booking_group_id,),
+            )
+            booking = cur.fetchone()
+            if not booking or booking["booking_status"] != "Checked Out":
+                raise ValueError("This booking is not currently checked out.")
+
+            cur.execute(
+                """SELECT sb.id AS booking_id, sb.sample_record_id,
+                          sb.booking_status, sb.preparation_status,
+                          sm.sample_id, sm.current_location_id,
+                          sm.origin_location_id, sm.current_holder
+                   FROM sample_bookings sb
+                   JOIN sample_master sm ON sm.id = sb.sample_record_id
+                   WHERE sb.id = %s AND sb.booking_group_id = %s
+                   FOR UPDATE OF sb, sm""",
+                (booking_item_id, booking_group_id),
+            )
+            item = cur.fetchone()
+            if not item:
+                raise ValueError("Booking item could not be found.")
+            if item["booking_status"] != "Checked Out":
+                raise ValueError("This sample has already been processed or was not issued.")
+            if item["preparation_status"] not in ("Prepared", "Replaced"):
+                raise ValueError("This booking item was not prepared for checkout.")
+            if item["preparation_status"] == "Replaced":
+                raise ValueError(
+                    "Replacement-issued items require replacement asset mapping "
+                    "before return can be processed."
+                )
+
+            if return_condition == "Damaged":
+                cur.execute(
+                    """SELECT id, code, name FROM sample_locations
+                       WHERE code = 'Q1' AND active = TRUE"""
+                )
+                location = cur.fetchone()
+                if not location:
+                    raise ValueError("Active Q1 quarantine location was not found.")
+            else:
+                destination_id = location_id or item["origin_location_id"]
+                if not destination_id:
+                    raise ValueError(
+                        "No home location is recorded. Select a valid storage location."
+                    )
+                cur.execute(
+                    """SELECT id, code, name FROM sample_locations
+                       WHERE id = %s AND active = TRUE""",
+                    (destination_id,),
+                )
+                location = cur.fetchone()
+                if not location or not location["code"].startswith("S"):
+                    raise ValueError("Good samples must return to an active storage location.")
+
+            cur.execute(
+                """UPDATE sample_master
+                   SET current_location_id = %s, current_holder = NULL,
+                       current_holder_team = NULL,
+                       condition = %s, asset_state = %s, updated_at = NOW()
+                   WHERE id = %s""",
+                (
+                    location["id"], return_condition,
+                    "Active" if return_condition == "Good" else "Damaged",
+                    item["sample_record_id"],
+                ),
+            )
+            cur.execute(
+                """UPDATE sample_bookings
+                   SET booking_status = 'Completed', updated_at = NOW()
+                   WHERE id = %s""",
+                (booking_item_id,),
+            )
+            event_type = (
+                "SAMPLE_RETURNED" if return_condition == "Good"
+                else "SAMPLE_RETURNED_DAMAGED"
+            )
+            details = (
+                f"Returned under booking {booking['booking_number']}. "
+                f"Condition: {return_condition}. "
+                f"Previous holder: {item['current_holder'] or 'Unknown'}. "
+                f"Destination: {location['code']} - {location['name']}. "
+                f"Notes: {notes or 'None'}"
+            )
+            cur.execute(
+                """INSERT INTO sample_events (
+                       sample_record_id, event_type, event_date, title,
+                       details, previous_location_id, new_location_id, created_at
+                   ) VALUES (%s, %s, NOW(), %s, %s, %s, %s, NOW())""",
+                (
+                    item["sample_record_id"], event_type,
+                    "Sample Returned" if return_condition == "Good"
+                    else "Sample Returned - Damaged",
+                    details, item["current_location_id"], location["id"],
+                ),
+            )
+            cur.execute(
+                """SELECT COUNT(*) AS remaining FROM sample_bookings
+                   WHERE booking_group_id = %s
+                     AND booking_status = 'Checked Out'""",
+                (booking_group_id,),
+            )
+            remaining = cur.fetchone()["remaining"]
+            if remaining == 0:
+                cur.execute(
+                    """UPDATE sample_booking_groups
+                       SET booking_status = 'Completed', updated_at = NOW()
+                       WHERE id = %s""",
+                    (booking_group_id,),
+                )
+        conn.commit()
+    return {
+        "booking_number": booking["booking_number"],
+        "sample_id": item["sample_id"],
+        "return_condition": return_condition,
+        "destination": f"{location['code']} - {location['name']}",
+        "remaining": remaining,
+        "booking_status": "Completed" if remaining == 0 else "Checked Out",
+    }
+
 def get_booking_groups(
     *,
     status=None,
@@ -3077,14 +3243,15 @@ def submit_booking_preparation(
             # Separate supplied items from exceptions.
             # -------------------------------------------------
 
+            if any(item["preparation_status"] == "Replaced" for item in items):
+                raise ValueError(
+                    "Replacement checkout is not implemented yet."
+                )
+
             supplied_items = [
                 item
                 for item in items
-                if item["preparation_status"]
-                in (
-                    "Prepared",
-                    "Replaced",
-                )
+                if item["preparation_status"] == "Prepared"
             ]
 
             missing_items = [
